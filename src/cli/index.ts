@@ -136,9 +136,9 @@ export async function startCLI(options: {
       prompt()
     })
 
-  prompt()
-
   rl.on("close", () => clearInterval(refreshInterval))
+
+  prompt()
 }
 
 type SlashCtx = {
@@ -175,22 +175,44 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
       console.log("agents:", ctx.registry.all().map(a => a.name).join(", "))
       break
     case "models": {
-      for (const a of ctx.registry.all()) {
-        const models = await a.getModels()
-        console.log(`\n[${a.name}] models:`)
-        models.forEach(m => console.log(`  - ${m.id} (${m.name}) [${m.capabilities.join(", ")}]${m.isDefault ? " [default]" : ""}`))
-        const override = ctx.modelOverrides.get(a.name)
-        if (override) console.log(`  (active override: ${override})`)
+      if (slash.args[0] === "refresh") {
+        console.log("Refreshing models...")
+        await Promise.all(ctx.registry.all().map(async a => {
+          try {
+            const models = await a.getModels()
+            ctx.modelCache.set(a.name, models.map(m => m.id))
+            console.log(`  ${a.name}: ${models.map(m => m.id).join(", ")}`)
+          } catch {
+            console.log(`  ${a.name}: (fetch failed, keeping cache)`)
+          }
+        }))
+        await ctx.modelCache.save()
+      } else {
+        ctx.registry.all().forEach(a => {
+          const models = ctx.modelCache.get(a.name)
+          const fetchedAt = ctx.modelCache.fetchedAt(a.name)
+          const age = fetchedAt
+            ? `${Math.round((Date.now() - fetchedAt.getTime()) / 3600000)}h ago`
+            : "no cache"
+          console.log(`  ${a.name} (${age}): ${models.length > 0 ? models.join(", ") : "(none cached)"}`)
+        })
       }
       break
     }
     case "model": {
       const [agentName, modelId] = slash.args
-      if (agentName && modelId) {
+      if (!agentName) {
+        console.log("usage: /model <agent> <model-id> | /model <agent> clear")
+        break
+      }
+      if (modelId === "clear") {
+        ctx.modelOverrides.delete(agentName)
+        console.log(`cleared model override for ${agentName}`)
+      } else if (modelId) {
         ctx.modelOverrides.set(agentName, modelId)
-        console.log(`override: ${agentName} → ${modelId}`)
+        console.log(`${agentName} → ${modelId} (this session)`)
       } else {
-        console.log("usage: /model <agent-name> <model-id>")
+        console.log("usage: /model <agent> <model-id> | /model <agent> clear")
       }
       break
     }
@@ -208,8 +230,10 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
         "/mode council|dispatch|pipeline  — switch execution mode",
         "/router <name>                   — switch router agent",
         "/agents                          — list available agents",
-        "/models                          — list available models per agent",
-        "/model <agent> <id>              — override model for an agent",
+        "/models                          — list cached models per agent",
+        "/models refresh                  — re-fetch models from all agents",
+        "/model <agent> <model-id>        — override model for this session",
+        "/model <agent> clear             — remove model override",
         "/sessions                        — list all sessions",
         "/history                         — show session history",
         "/help                            — show this help",

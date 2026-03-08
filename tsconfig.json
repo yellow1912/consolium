@@ -3,9 +3,10 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,
-"types": ["bun-types"]
+    "types": ["bun-types"]
   },
   "include": ["src/**/*"]
 }

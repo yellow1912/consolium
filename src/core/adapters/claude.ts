@@ -31,23 +31,34 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   private async _query(prompt: string, options?: QueryOptions): Promise<string> {
-    const args = ["--print"]
-    const model = options?.model ?? this.model
-    if (model) args.push("--model", model)
-    if (this.role) args.push("--system-prompt", this.role)
-    args.push(prompt)
-    const env = { ...process.env }
-    delete env.CLAUDECODE
-    const proc = Bun.spawn(["claude", ...args], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env,
-    })
-    const [, stdout] = await Promise.all([
-      proc.exited,
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ])
+    const runWith = async (opts?: QueryOptions): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+      const args = ["--print"]
+      const model = opts?.model ?? this.model
+      if (model) args.push("--model", model)
+      if (this.role) args.push("--system-prompt", this.role)
+      args.push(prompt)
+      const env = { ...process.env }
+      delete env.CLAUDECODE
+      const proc = Bun.spawn(["claude", ...args], { stdout: "pipe", stderr: "pipe", env })
+      const [exitCode, stdout, stderr] = await Promise.all([
+        proc.exited,
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ])
+      return { exitCode, stdout, stderr }
+    }
+
+    let { exitCode, stdout, stderr } = await runWith(options)
+
+    if (exitCode !== 0 && options?.model && stderr.toLowerCase().includes("model")) {
+      // Heuristic: model rejected — retry with adapter default
+      console.warn(`[claude] model '${options.model}' rejected, retrying with default`)
+      ;({ exitCode, stdout, stderr } = await runWith())
+    }
+
+    if (exitCode !== 0) {
+      throw new Error(`claude exited with code ${exitCode}: ${stderr}`)
+    }
     return stdout.trim()
   }
 

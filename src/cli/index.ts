@@ -35,6 +35,7 @@ export async function startCLI(options: {
   async function refreshModels(): Promise<void> {
     await Promise.all(registry.all().map(async adapter => {
       try {
+        if (!await adapter.isAvailable()) return
         const models = await adapter.getModels()
         modelCache.set(adapter.name, models.map(m => m.id))
       } catch {
@@ -54,11 +55,13 @@ export async function startCLI(options: {
 
   function buildModelOverrides(): Record<string, string[]> {
     return Object.fromEntries(
-      registry.all().map(a => {
-        const sessionOverride = modelOverrides.get(a.name)
-        if (sessionOverride) return [a.name, [sessionOverride]]
-        return [a.name, modelCache.get(a.name)]
-      })
+      registry.all()
+        .filter(a => a.name !== routerName)
+        .map(a => {
+          const sessionOverride = modelOverrides.get(a.name)
+          if (sessionOverride) return [a.name, [sessionOverride]]
+          return [a.name, modelCache.get(a.name)]
+        })
     )
   }
 

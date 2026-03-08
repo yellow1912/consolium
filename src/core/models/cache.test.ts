@@ -46,7 +46,7 @@ describe("ModelCache", () => {
   })
 
   it("load() on missing file results in empty cache", async () => {
-    const cache = new ModelCache("/tmp/nonexistent-consilium-test-999.json")
+    const cache = new ModelCache(testPath)
     await cache.load()
     expect(cache.get("any")).toEqual([])
   })

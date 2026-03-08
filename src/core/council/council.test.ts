@@ -124,3 +124,63 @@ describe("pipeline mode", () => {
     expect(result.approved).toBe(false)
   })
 })
+
+describe("debate mode", () => {
+  it("round 1 collects responses from all agents", async () => {
+    const runner = new CouncilRunner({
+      router: mock("claude", "synthesized"),
+      adapters: [mock("codex", "codex opinion"), mock("gemini", "gemini opinion")],
+    })
+    const result = await runner.debate("what is best?", [], { maxRounds: 3 })
+    expect(result.rounds[0]).toHaveLength(2)
+    expect(result.rounds[0].map(r => r.agent)).toContain("codex")
+    expect(result.rounds[0].map(r => r.agent)).toContain("gemini")
+  })
+
+  it("agents that pass are excluded from subsequent rounds output", async () => {
+    let callCount = 0
+    const passingAdapter: AgentAdapter = {
+      name: "gemini",
+      isAvailable: async () => true,
+      getModels: async () => [],
+      query: async () => {
+        callCount++
+        // round 1: speaks; round 2+: passes
+        if (callCount === 1) return { agent: "gemini", content: "gemini opinion", durationMs: 1 }
+        return { agent: "gemini", content: JSON.stringify({ pass: true }), durationMs: 1 }
+      },
+    }
+    const runner = new CouncilRunner({
+      router: mock("claude", "synthesis"),
+      adapters: [mock("codex", JSON.stringify({ pass: true })), passingAdapter],
+    })
+    const result = await runner.debate("topic", [], { maxRounds: 3 })
+    // round 2: codex passes, gemini passes → all pass → stop
+    expect(result.consensusReached).toBe(true)
+    expect(result.roundCount).toBe(2)
+    // round 2 has no non-pass responses
+    expect(result.rounds[1]).toHaveLength(0)
+  })
+
+  it("stops at maxRounds even if agents keep responding", async () => {
+    const runner = new CouncilRunner({
+      router: mock("claude", "synthesis"),
+      adapters: [
+        mock("codex", JSON.stringify({ pass: false, content: "still debating" })),
+        mock("gemini", JSON.stringify({ pass: false, content: "me too" })),
+      ],
+    })
+    const result = await runner.debate("topic", [], { maxRounds: 2 })
+    expect(result.roundCount).toBe(2)
+    expect(result.consensusReached).toBe(false)
+  })
+
+  it("router synthesizes at the end", async () => {
+    const runner = new CouncilRunner({
+      router: mock("claude", "final synthesis"),
+      adapters: [mock("codex", "opinion"), mock("gemini", JSON.stringify({ pass: true }))],
+    })
+    const result = await runner.debate("topic", [], { maxRounds: 1 })
+    expect(result.synthesis).toBe("final synthesis")
+  })
+})

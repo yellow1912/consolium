@@ -11,6 +11,15 @@ export type PipelineResult = {
   approved: boolean
 }
 
+export type DebateRound = { agent: string; content: string }[]
+
+export type DebateResult = {
+  rounds: DebateRound[]
+  synthesis: string
+  consensusReached: boolean
+  roundCount: number
+}
+
 export class CouncilRunner {
   private router: AgentAdapter
   private adapters: AgentAdapter[]
@@ -109,5 +118,74 @@ export class CouncilRunner {
       reviews,
       approved: reviews.every(r => r.verdict === "approved"),
     }
+  }
+
+  async debate(
+    prompt: string,
+    context: Message[],
+    options: { maxRounds?: number } = {},
+  ): Promise<DebateResult> {
+    const maxRounds = options.maxRounds ?? 5
+    const rounds: DebateRound[] = []
+    const agents = this.adapters
+
+    const history = (): string =>
+      rounds.flatMap((round, i) =>
+        round.map(r => `[Round ${i + 1}] [${r.agent}]: ${r.content}`)
+      ).join("\n")
+
+    // Round 1: all agents give their initial response (plain text, no pass/fail)
+    const round1 = await Promise.all(
+      agents.map(async a => {
+        const resp = await a.query(
+          `Debate topic: "${prompt}"\n\nGive your initial position.`,
+          context,
+        )
+        return { agent: a.name, content: resp.content }
+      })
+    )
+    rounds.push(round1)
+
+    // Rounds 2+
+    for (let round = 2; round <= maxRounds; round++) {
+      const debateHistory = history()
+      const roundResponses = await Promise.all(
+        agents.map(async a => {
+          const resp = await a.query(
+            `Debate topic: "${prompt}"\n\nDebate so far:\n${debateHistory}\n\nDo you have anything to add or challenge? Respond with JSON only:\n{ "pass": true } if you have nothing new to add\n{ "pass": false, "content": "<your response>" } if you want to speak`,
+            [],
+          )
+          try {
+            const parsed = JSON.parse(resp.content)
+            if (parsed.pass === true) return null
+            return { agent: a.name, content: parsed.content as string }
+          } catch {
+            // agent didn't follow JSON format — treat as a response
+            return { agent: a.name, content: resp.content }
+          }
+        })
+      )
+      const nonPass = roundResponses.filter((r): r is { agent: string; content: string } => r !== null)
+      rounds.push(nonPass)
+
+      if (nonPass.length === 0) {
+        const synthesisPrompt = [
+          `Debate topic: "${prompt}"`,
+          `Full debate:\n${history()}`,
+          `Consensus was reached. Synthesize the final position.`,
+        ].join("\n")
+        const synthesis = await this.router.query(synthesisPrompt, [])
+        return { rounds, synthesis: synthesis.content, consensusReached: true, roundCount: round }
+      }
+    }
+
+    // Max rounds reached
+    const synthesisPrompt = [
+      `Debate topic: "${prompt}"`,
+      `Full debate:\n${history()}`,
+      `The debate reached the maximum number of rounds (${maxRounds}). Synthesize the best conclusion from what was said.`,
+    ].join("\n")
+    const synthesis = await this.router.query(synthesisPrompt, [])
+    return { rounds, synthesis: synthesis.content, consensusReached: false, roundCount: maxRounds }
   }
 }

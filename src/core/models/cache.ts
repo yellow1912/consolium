@@ -24,7 +24,19 @@ export class ModelCache {
       const raw = await readFile(this.path, "utf-8")
       const parsed = JSON.parse(raw)
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        this.entries = parsed
+        const validated: CacheFile = {}
+        for (const [k, v] of Object.entries(parsed)) {
+          if (
+            v &&
+            typeof v === "object" &&
+            Array.isArray((v as any).models) &&
+            (v as any).models.every((m: unknown) => typeof m === "string") &&
+            typeof (v as any).fetchedAt === "string"
+          ) {
+            validated[k] = v as CacheEntry
+          }
+        }
+        this.entries = validated
       }
     } catch {
       this.entries = {}

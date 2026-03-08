@@ -1,6 +1,8 @@
 import { describe, it, expect } from "bun:test"
 import { CodexAdapter } from "./codex"
 import { GeminiAdapter } from "./gemini"
+import { SubprocessAdapter } from "./base"
+import type { QueryOptions, ModelInfo } from "./types"
 
 describe("CodexAdapter", () => {
   it("has correct name", () => { expect(new CodexAdapter().name).toBe("codex") })
@@ -48,5 +50,31 @@ describe("GeminiAdapter", () => {
     const args = new GeminiAdapter("gemini-2.5-pro").buildArgs("my prompt")
     expect(args).toContain("-m")
     expect(args).toContain("gemini-2.5-pro")
+  })
+})
+
+describe("SubprocessAdapter fallback", () => {
+  it("retries without model option on model-not-found error", async () => {
+    const calls: Array<{ args: string[] }> = []
+    class TestAdapter extends SubprocessAdapter {
+      readonly name = "test"
+      readonly bin = "test-bin"
+      getModels = async (): Promise<ModelInfo[]> => []
+      buildArgs(prompt: string, options?: QueryOptions) {
+        calls.push({ args: options?.model ? ["--model", options.model, prompt] : [prompt] })
+        return options?.model ? ["--model", options.model, prompt] : [prompt]
+      }
+    }
+    const adapter = new TestAdapter()
+    // First call (with model) fails with model error, second (no model) succeeds
+    let callCount = 0
+    ;(adapter as any).spawnAndRead = async (args: string[]) => {
+      callCount++
+      if (callCount === 1) return { exitCode: 1, stdout: "", stderr: "unknown model: bad-model" }
+      return { exitCode: 0, stdout: "ok response", stderr: "" }
+    }
+    const result = await adapter.query("hello", [], { model: "bad-model" })
+    expect(result.content).toBe("ok response")
+    expect(callCount).toBe(2)
   })
 })

@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "consilium": "./src/index.ts"
+    "consilium": "./src/index.ts",
+    "csl": "./src/index.ts"
   },
   "scripts": {
     "start": "bun src/index.ts",

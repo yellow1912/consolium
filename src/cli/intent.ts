@@ -40,7 +40,8 @@ Respond with JSON only. No explanation.`
 
   try {
     const resp = await classifier.query(prompt, [])
-    const parsed = JSON.parse(resp.content)
+    const raw = resp.content.replace(/^```(?:json)?\s*/m, "").replace(/\s*```$/m, "").trim()
+    const parsed = JSON.parse(raw)
     if (parsed.type === "command" && typeof parsed.command === "string") {
       return {
         type: "command",

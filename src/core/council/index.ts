@@ -20,7 +20,7 @@ export type DebateResult = {
   roundCount: number
 }
 
-type AgentSessionStore = {
+export type AgentSessionStore = {
   getAgentSession(masterSessionId: string, agentName: string): string | null
   setAgentSession(masterSessionId: string, agentName: string, agentSessionId: string): void
 }
@@ -57,7 +57,7 @@ export class CouncilRunner {
   }
 
   private buildSystemPrompt(agentName: string, mode: string): string {
-    const peers = [...this.adapters, this.router]
+    const peers = this.adapters
       .map(a => a.name)
       .filter(n => n !== agentName)
     return `You are ${agentName} in a multi-agent discussion with ${peers.join(", ")}. Mode: ${mode}. Build on peer responses when provided.`
@@ -179,7 +179,7 @@ export class CouncilRunner {
     ].join("\n")
 
     const reviews = await Promise.all(reviewers.map(async a => {
-      const r = await this.queryAgent(a, reviewPrompt, [], "pipeline")
+      const r = await this.queryAgent(a, reviewPrompt, [], "pipeline") // reviewers get full task+result in prompt, not from context
       try {
         const parsed = JSON.parse(r.content)
         return {
@@ -249,7 +249,7 @@ export class CouncilRunner {
           const resp = await this.queryAgent(
             a,
             `Debate topic: "${prompt}"\n\nDebate so far:\n${debateHistory}\n\nDo you have anything to add or challenge? Respond with JSON only:\n{ "pass": true } if you have nothing new to add\n{ "pass": false, "content": "<your response>" } if you want to speak`,
-            context,
+            [], // debate history is embedded in the prompt string above; user context history is not relevant here
             "debate",
           )
           try {

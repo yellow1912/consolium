@@ -26,12 +26,13 @@ export class ModelCache {
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         const validated: CacheFile = {}
         for (const [k, v] of Object.entries(parsed)) {
+          const entry = v as Record<string, unknown>
           if (
             v &&
             typeof v === "object" &&
-            Array.isArray((v as any).models) &&
-            (v as any).models.every((m: unknown) => typeof m === "string") &&
-            typeof (v as any).fetchedAt === "string"
+            Array.isArray(entry.models) &&
+            (entry.models as unknown[]).every((m) => typeof m === "string") &&
+            typeof entry.fetchedAt === "string"
           ) {
             validated[k] = v as CacheEntry
           }

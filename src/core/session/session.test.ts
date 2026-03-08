@@ -85,3 +85,28 @@ describe("SessionManager", () => {
     expect(review.verdict).toBe("approved")
   })
 })
+
+describe("agent sessions", () => {
+  it("stores and retrieves agent session id", () => {
+    const mgr = new SessionManager("/tmp/test-session-mgr-7a.db")
+    const s = mgr.create({ mode: "dispatch", router: "claude" })
+    mgr.setAgentSession(s.id, "claude", "uuid-abc")
+    expect(mgr.getAgentSession(s.id, "claude")).toBe("uuid-abc")
+    mgr.close()
+    try { require("node:fs").rmSync("/tmp/test-session-mgr-7a.db") } catch {}
+  })
+  it("returns null for missing agent session", () => {
+    const mgr = new SessionManager("/tmp/test-session-mgr-7b.db")
+    const s = mgr.create({ mode: "dispatch", router: "claude" })
+    expect(mgr.getAgentSession(s.id, "gemini")).toBeNull()
+    mgr.close()
+    try { require("node:fs").rmSync("/tmp/test-session-mgr-7b.db") } catch {}
+  })
+  it("supports debate mode", () => {
+    const mgr = new SessionManager("/tmp/test-session-mgr-7c.db")
+    const s = mgr.create({ mode: "debate", router: "claude" })
+    expect(s.mode).toBe("debate")
+    mgr.close()
+    try { require("node:fs").rmSync("/tmp/test-session-mgr-7c.db") } catch {}
+  })
+})

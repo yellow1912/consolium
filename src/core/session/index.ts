@@ -10,7 +10,7 @@ export class SessionManager {
 
   close() { this.db.close() }
 
-  create(input: { mode: "council" | "dispatch" | "pipeline"; router?: string; name?: string }) {
+  create(input: { mode: "council" | "dispatch" | "pipeline" | "debate"; router?: string; name?: string }) {
     return this.db.createSession({ mode: input.mode, router: input.router ?? "claude", name: input.name })
   }
 
@@ -40,5 +40,13 @@ export class SessionManager {
 
   createReview(taskId: string, reviewer: string, content: string, verdict: "approved" | "changes_requested") {
     return this.db.createReview({ taskId, reviewer, content, verdict })
+  }
+
+  getAgentSession(masterSessionId: string, agentName: string): string | null {
+    return this.db.getAgentSession(masterSessionId, agentName)
+  }
+
+  setAgentSession(masterSessionId: string, agentName: string, agentSessionId: string): void {
+    this.db.setAgentSession(masterSessionId, agentName, agentSessionId)
   }
 }

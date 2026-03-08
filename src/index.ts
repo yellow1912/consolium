@@ -36,9 +36,9 @@ if (values.mcp) {
   const { startMcpServer } = await import("./mcp/server")
   await startMcpServer()
 } else {
-  const { startCLI } = await import("./cli/index")
-  await startCLI({
-    mode: values.mode as "council" | "dispatch" | "pipeline" | undefined,
+  const { startInkCLI } = await import("./cli/render")
+  await startInkCLI({
+    mode: values.mode as "council" | "dispatch" | "pipeline" | "debate" | undefined,
     router: values.router,
     resumeId: values.resume,
     personas: values.personas,

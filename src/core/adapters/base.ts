@@ -44,6 +44,31 @@ export abstract class SubprocessAdapter implements AgentAdapter {
     }
   }
 
+  async *queryStream(prompt: string, context: Message[], options?: QueryOptions): AsyncGenerator<string, void, unknown> {
+    const fullPrompt = this.buildContextPrompt(prompt, context)
+    const args = this.buildArgs(fullPrompt, options)
+    const proc = Bun.spawn([this.bin, ...args], { stdout: "pipe", stderr: "pipe" })
+    const reader = proc.stdout.getReader()
+    const decoder = new TextDecoder()
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        yield decoder.decode(value, { stream: true })
+      }
+      // Flush any remaining bytes from the decoder
+      const remaining = decoder.decode()
+      if (remaining) yield remaining
+    } finally {
+      reader.releaseLock()
+    }
+    const exitCode = await proc.exited
+    if (exitCode !== 0) {
+      const stderr = await new Response(proc.stderr).text()
+      throw new Error(`${this.name} exited with code ${exitCode}: ${stderr}`)
+    }
+  }
+
   abstract getModels(): Promise<ModelInfo[]>
 
   protected buildContextPrompt(prompt: string, context: Message[]): string {

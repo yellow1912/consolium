@@ -27,6 +27,7 @@ export type QueryOptions = {
 export interface AgentAdapter {
   readonly name: string
   query(prompt: string, context: Message[], options?: QueryOptions): Promise<AgentResponse>
+  queryStream?(prompt: string, context: Message[], options?: QueryOptions): AsyncGenerator<string, void, unknown>
   stream?(prompt: string, context: Message[], options?: QueryOptions): AsyncIterable<string>
   isAvailable(): Promise<boolean>
   getModels(): Promise<ModelInfo[]>

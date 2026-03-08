@@ -58,6 +58,36 @@ export class ClaudeAdapter extends SubprocessAdapter {
     return { exitCode, stdout, stderr }
   }
 
+  override async *queryStream(prompt: string, context: Message[], options?: QueryOptions): AsyncGenerator<string, void, unknown> {
+    this._isResume = !!options?.agentSessionId
+    this._sessionId = options?.agentSessionId ?? randomUUID()
+    const effectivePrompt = this._isResume || context.length === 0
+      ? prompt
+      : this.buildContextPrompt(prompt, context)
+    const args = this.buildArgs(effectivePrompt, options)
+    const env = { ...process.env }
+    delete env.CLAUDECODE
+    const proc = Bun.spawn([this.bin, ...args], { stdout: "pipe", stderr: "pipe", env })
+    const reader = proc.stdout.getReader()
+    const decoder = new TextDecoder()
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        yield decoder.decode(value, { stream: true })
+      }
+      const remaining = decoder.decode()
+      if (remaining) yield remaining
+    } finally {
+      reader.releaseLock()
+    }
+    const exitCode = await proc.exited
+    if (exitCode !== 0) {
+      const stderr = await new Response(proc.stderr).text()
+      throw new Error(`claude exited with code ${exitCode}: ${stderr}`)
+    }
+  }
+
   override async query(prompt: string, context: Message[], options?: QueryOptions): Promise<AgentResponse> {
     this._isResume = !!options?.agentSessionId
     this._sessionId = options?.agentSessionId ?? randomUUID()

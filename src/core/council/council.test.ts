@@ -64,6 +64,37 @@ describe("dispatch mode", () => {
   })
 })
 
+describe("modelOverrides in dispatch", () => {
+  it("uses modelOverrides in dispatch router prompt instead of getModels()", async () => {
+    let capturedPrompt = ""
+    const router: AgentAdapter = {
+      name: "claude",
+      isAvailable: async () => true,
+      getModels: async () => [],
+      query: async (p: string) => {
+        capturedPrompt = p
+        return { agent: "claude", content: '{"assignTo":"codex","model":"fast-model"}', durationMs: 1 }
+      },
+    }
+    const codex: AgentAdapter = {
+      name: "codex",
+      isAvailable: async () => true,
+      getModels: async () => [{ id: "slow-model", name: "Slow", capabilities: ["coding"] }],
+      query: async () => ({ agent: "codex", content: "ok", durationMs: 1 }),
+    }
+    const runner = new CouncilRunner({
+      router,
+      adapters: [codex],
+      modelOverrides: { codex: ["fast-model", "other-model"] },
+    })
+    await runner.dispatch("do something", [])
+    // router prompt should contain the cached override models, not getModels() result
+    expect(capturedPrompt).toContain("fast-model")
+    expect(capturedPrompt).toContain("other-model")
+    expect(capturedPrompt).not.toContain("slow-model")
+  })
+})
+
 describe("pipeline mode", () => {
   it("executes task then peer-reviews", async () => {
     const runner = new CouncilRunner({

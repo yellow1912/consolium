@@ -86,14 +86,23 @@ export async function startCLI(options: {
         return prompt()
       }
 
-      // Wrap adapters to apply overrides
+      // Build modelOverrides: session override takes precedence over cache
+      const builtModelOverrides: Record<string, string[]> = Object.fromEntries(
+        registry.all().map(a => {
+          const sessionOverride = modelOverrides.get(a.name)
+          if (sessionOverride) return [a.name, [sessionOverride]]
+          return [a.name, modelCache.get(a.name)]
+        })
+      )
+
+      // Wrap adapters to apply session model overrides to query() calls
       const adaptersWithOverrides = registry.all().map(a => {
         const overrideModel = modelOverrides.get(a.name)
         if (!overrideModel) return a
         return new Proxy(a, {
           get(target, prop, receiver) {
             if (prop === "query") {
-              return (p: string, c: Message[], opts?: any) => 
+              return (p: string, c: Message[], opts?: any) =>
                 target.query(p, c, { ...opts, model: opts?.model ?? overrideModel })
             }
             return Reflect.get(target, prop, receiver)
@@ -101,9 +110,10 @@ export async function startCLI(options: {
         })
       })
 
-      const runner = new CouncilRunner({ 
-        router, 
-        adapters: adaptersWithOverrides.filter(a => a.name !== routerName) 
+      const runner = new CouncilRunner({
+        router,
+        adapters: adaptersWithOverrides.filter(a => a.name !== routerName),
+        modelOverrides: builtModelOverrides,
       })
 
       try {

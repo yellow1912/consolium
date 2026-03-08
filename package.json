@@ -12,10 +12,13 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
-    "@clack/prompts": "^1.1.0",
+    "@inkjs/ui": "^2.0.0",
     "@modelcontextprotocol/sdk": "latest",
     "@openai/codex-sdk": "latest",
     "drizzle-orm": "latest",
+    "ink": "^6.8.0",
+    "ink-markdown": "^1.0.4",
+    "react": "^19.2.4",
     "zod": "latest"
   },
   "devDependencies": {

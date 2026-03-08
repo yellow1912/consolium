@@ -1,15 +1,19 @@
 import { Database } from "bun:sqlite"
 import { drizzle } from "drizzle-orm/bun-sqlite"
 import { eq } from "drizzle-orm"
+import type { InferSelectModel } from "drizzle-orm"
 import { randomUUID } from "node:crypto"
 import { sessions, messages, tasks, reviews, participants } from "./schema"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 
-type Mode = "council" | "dispatch" | "pipeline"
-type Status = "active" | "closed"
-type TaskStatus = "pending" | "running" | "done" | "failed"
-type Verdict = "approved" | "changes_requested"
+type Session = InferSelectModel<typeof sessions>
+type Mode = Session["mode"]
+type Status = Session["status"]
+type Task = InferSelectModel<typeof tasks>
+type TaskStatus = Task["status"]
+type Review = InferSelectModel<typeof reviews>
+type Verdict = Review["verdict"]
 
 export class DbStore {
   private sqlite: Database
@@ -39,11 +43,13 @@ export class DbStore {
     this.sqlite.exec(
       "CREATE TABLE IF NOT EXISTS participants (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, agent TEXT NOT NULL, joined_at TEXT NOT NULL, last_seen TEXT NOT NULL);"
     )
+    this.sqlite.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_session_agent ON participants(session_id, agent);"
+    )
   }
 
   close() {
-    // Checkpoint WAL so -wal and -shm files are cleaned up on close
-    this.sqlite.exec("PRAGMA wal_checkpoint(TRUNCATE);")
+    try { this.sqlite.exec("PRAGMA wal_checkpoint(TRUNCATE);") } catch {}
     this.sqlite.close()
   }
 
@@ -130,21 +136,19 @@ export class DbStore {
   }
 
   upsertParticipant(sessionId: string, agent: string) {
-    const existing = this.db
-      .select()
-      .from(participants)
-      .where(eq(participants.sessionId, sessionId))
-      .all()
-      .find((p) => p.agent === agent)
     const now = nowIso()
-    if (existing) {
-      this.db.update(participants).set({ lastSeen: now }).where(eq(participants.id, existing.id)).run()
-    } else {
-      this.db
-        .insert(participants)
-        .values({ id: randomUUID(), sessionId, agent, joinedAt: now, lastSeen: now })
-        .run()
-    }
+    this.db.insert(participants)
+      .values({ id: randomUUID(), sessionId, agent, joinedAt: now, lastSeen: now })
+      .onConflictDoUpdate({ target: [participants.sessionId, participants.agent], set: { lastSeen: now } })
+      .run()
+  }
+
+  getTask(id: string) {
+    return this.db.select().from(tasks).where(eq(tasks.id, id)).get() ?? null
+  }
+
+  getParticipants(sessionId: string) {
+    return this.db.select().from(participants).where(eq(participants.sessionId, sessionId)).all()
   }
 }
 

@@ -1,4 +1,4 @@
-import type { AgentAdapter, AgentResponse, Message, ModelInfo } from "../adapters/types"
+import type { AgentAdapter, AgentResponse, Message } from "../adapters/types"
 
 export type CouncilResult = {
   responses: AgentResponse[]

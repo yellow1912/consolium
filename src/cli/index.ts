@@ -52,6 +52,27 @@ export async function startCLI(options: {
   const refreshInterval = setInterval(() => { void refreshModels() }, TTL_MS)
   refreshInterval.unref() // don't keep process alive just for this
 
+  function buildModelOverrides(): Record<string, string[]> {
+    return Object.fromEntries(
+      registry.all().map(a => {
+        const sessionOverride = modelOverrides.get(a.name)
+        if (sessionOverride) return [a.name, [sessionOverride]]
+        return [a.name, modelCache.get(a.name)]
+      })
+    )
+  }
+
+  function buildRunner(): CouncilRunner {
+    const router = registry.get(routerName)!
+    return new CouncilRunner({
+      router,
+      adapters: registry.except(routerName),
+      modelOverrides: buildModelOverrides(),
+    })
+  }
+
+  let runner = buildRunner()
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -72,6 +93,7 @@ export async function startCLI(options: {
         await handleSlash(slash, { mode, routerName, registry, sessionMgr, context, modelOverrides, modelCache,
           setMode: (m: Mode) => { mode = m },
           setRouter: (r: string) => { routerName = r },
+          rebuildRunner: () => { runner = buildRunner() },
         })
         return prompt()
       }
@@ -79,42 +101,6 @@ export async function startCLI(options: {
       // Save user message
       sessionMgr.addMessage(session.id, "user", null, trimmed)
       context.push({ role: "user", agent: null, content: trimmed })
-
-      const router = registry.get(routerName)
-      if (!router) {
-        console.error(`[error] Router '${routerName}' not found`)
-        return prompt()
-      }
-
-      // Build modelOverrides: session override takes precedence over cache
-      const builtModelOverrides: Record<string, string[]> = Object.fromEntries(
-        registry.all().map(a => {
-          const sessionOverride = modelOverrides.get(a.name)
-          if (sessionOverride) return [a.name, [sessionOverride]]
-          return [a.name, modelCache.get(a.name)]
-        })
-      )
-
-      // Wrap adapters to apply session model overrides to query() calls
-      const adaptersWithOverrides = registry.all().map(a => {
-        const overrideModel = modelOverrides.get(a.name)
-        if (!overrideModel) return a
-        return new Proxy(a, {
-          get(target, prop, receiver) {
-            if (prop === "query") {
-              return (p: string, c: Message[], opts?: any) =>
-                target.query(p, c, { ...opts, model: opts?.model ?? overrideModel })
-            }
-            return Reflect.get(target, prop, receiver)
-          }
-        })
-      })
-
-      const runner = new CouncilRunner({
-        router,
-        adapters: adaptersWithOverrides.filter(a => a.name !== routerName),
-        modelOverrides: builtModelOverrides,
-      })
 
       try {
         if (mode === "council") {
@@ -161,6 +147,7 @@ type SlashCtx = {
   modelCache: ModelCache
   setMode: (m: Mode) => void
   setRouter: (r: string) => void
+  rebuildRunner: () => void
 }
 
 async function handleSlash(slash: { command: string; args: string[] }, ctx: SlashCtx) {
@@ -177,7 +164,7 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
     }
     case "router": {
       const r = slash.args[0]
-      if (r) { ctx.setRouter(r); console.log(`router → ${r}`) }
+      if (r) { ctx.setRouter(r); ctx.rebuildRunner(); console.log(`router → ${r}`) }
       else console.log("usage: /router <agent-name>")
       break
     }
@@ -217,9 +204,11 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
       }
       if (modelId === "clear") {
         ctx.modelOverrides.delete(agentName)
+        ctx.rebuildRunner()
         console.log(`cleared model override for ${agentName}`)
       } else if (modelId) {
         ctx.modelOverrides.set(agentName, modelId)
+        ctx.rebuildRunner()
         console.log(`${agentName} → ${modelId} (this session)`)
       } else {
         console.log("usage: /model <agent> <model-id> | /model <agent> clear")

@@ -100,6 +100,10 @@ export async function startCLI(options: {
           setMode: (m: Mode) => { mode = m },
           setRouter: (r: string) => { routerName = r },
           rebuildRunner: () => { runner = buildRunner() },
+          debateMaxRounds,
+          debateAutopilot,
+          setDebateMaxRounds: (n: number) => { debateMaxRounds = n },
+          setDebateAutopilot: (on: boolean) => { debateAutopilot = on },
         })
         return rl.closed || prompt()
       }
@@ -192,6 +196,10 @@ type SlashCtx = {
   setMode: (m: Mode) => void
   setRouter: (r: string) => void
   rebuildRunner: () => void
+  debateMaxRounds: number
+  debateAutopilot: boolean
+  setDebateMaxRounds: (n: number) => void
+  setDebateAutopilot: (on: boolean) => void
 }
 
 async function handleSlash(slash: { command: string; args: string[] }, ctx: SlashCtx) {
@@ -274,6 +282,8 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
     case "help":
       console.log([
         "/mode council|dispatch|pipeline|debate  — switch execution mode",
+        "/debate rounds <n>               — set max debate rounds (default: 5)",
+        "/debate autopilot on|off         — skip/enable human pause between rounds",
         "/router <name>                   — switch router agent",
         "/agents                          — list available agents",
         "/models                          — list cached models per agent",
@@ -285,6 +295,22 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
         "/help                            — show this help",
       ].join("\n"))
       break
+    case "debate": {
+      const [sub, val] = slash.args
+      if (sub === "rounds") {
+        const n = parseInt(val, 10)
+        if (!n || n < 1) { console.log("usage: /debate rounds <number>"); break }
+        ctx.setDebateMaxRounds(n)
+        console.log(`debate max rounds → ${n}`)
+      } else if (sub === "autopilot") {
+        if (val === "on") { ctx.setDebateAutopilot(true); console.log("debate autopilot → on") }
+        else if (val === "off") { ctx.setDebateAutopilot(false); console.log("debate autopilot → off") }
+        else console.log("usage: /debate autopilot on|off")
+      } else {
+        console.log("usage: /debate rounds <n> | /debate autopilot on|off")
+      }
+      break
+    }
     default:
       console.log(`unknown command: /${slash.command}`)
   }

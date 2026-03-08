@@ -34,4 +34,10 @@ describe("parseSlash", () => {
     expect(parseSlash("/model claude claude-opus-4-6")).toEqual({ command: "model", args: ["claude", "claude-opus-4-6"] })
     expect(parseSlash("/model claude clear")).toEqual({ command: "model", args: ["claude", "clear"] })
   })
+
+  it("parses /debate command", () => {
+    expect(parseSlash("/debate rounds 3")).toEqual({ command: "debate", args: ["rounds", "3"] })
+    expect(parseSlash("/debate autopilot on")).toEqual({ command: "debate", args: ["autopilot", "on"] })
+    expect(parseSlash("/debate autopilot off")).toEqual({ command: "debate", args: ["autopilot", "off"] })
+  })
 })

@@ -2,6 +2,13 @@ import React from "react"
 import { Box, Text } from "ink"
 import type { Message as MessageType } from "../../core/adapters/types.js"
 
+let Markdown: React.ComponentType<{ children: string }> | null = null
+try {
+  Markdown = require("ink-markdown").default
+} catch {
+  // ink-markdown not available; fall back to plain text
+}
+
 function getSenderColor(role: MessageType["role"], agent: string | null): string {
   if (role === "user") return "green"
   if (role === "system") return "gray"
@@ -29,7 +36,11 @@ export default function Message({ message }: MessageProps) {
     <Box flexDirection="column" marginBottom={1}>
       <Text color={color} bold>● {sender}</Text>
       <Box marginLeft={2}>
-        <Text wrap="wrap">{content}</Text>
+        {role === "agent" && Markdown ? (
+          <Markdown>{content}</Markdown>
+        ) : (
+          <Text wrap="wrap">{content}</Text>
+        )}
       </Box>
     </Box>
   )

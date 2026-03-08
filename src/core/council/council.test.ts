@@ -2,6 +2,17 @@ import { describe, it, expect } from "bun:test"
 import { CouncilRunner } from "./index"
 import type { AgentAdapter, Message } from "../adapters/types"
 
+function mockAdapter(name: string) {
+  return {
+    name,
+    query: async (_p: string, _c: unknown, _o?: unknown) => ({
+      agent: name, content: `${name} response`, durationMs: 0, sessionId: `${name}-session`,
+    }),
+    isAvailable: async () => true,
+    getModels: async () => [],
+  }
+}
+
 const mock = (name: string, response: string): AgentAdapter => ({
   name,
   isAvailable: async () => true,
@@ -222,5 +233,73 @@ describe("debate mode", () => {
     const result = await runner2.debate("topic", [], { maxRounds: 5 })
     expect(result.consensusReached).toBe(true)
     expect(result.synthesis).toBe("consensus synthesis")
+  })
+})
+
+describe("CouncilRunner.buildDeltaMessage", () => {
+  const runner = new CouncilRunner({ router: mockAdapter("router") as any, adapters: [] })
+
+  it("returns plain prompt when context is empty", () => {
+    expect((runner as any).buildDeltaMessage("hello", [], "claude")).toBe("hello")
+  })
+
+  it("includes peer responses from last turn, excludes self", () => {
+    const ctx = [
+      { role: "user", agent: null, content: "q1" },
+      { role: "agent", agent: "gemini", content: "gemini answer" },
+      { role: "agent", agent: "claude", content: "claude answer" },
+    ] as any
+    const msg = (runner as any).buildDeltaMessage("q2", ctx, "claude")
+    expect(msg).toContain("[gemini]: gemini answer")
+    expect(msg).toContain("q2")
+    expect(msg).not.toContain("claude answer")
+  })
+
+  it("returns plain prompt when no prior agent responses exist", () => {
+    expect((runner as any).buildDeltaMessage("hi", [], "claude")).toBe("hi")
+  })
+})
+
+describe("CouncilRunner session management", () => {
+  it("stores sessionId after agent call", async () => {
+    const stored: Record<string, string> = {}
+    const sessionStore = {
+      getAgentSession: (_mid: string, _name: string) => null,
+      setAgentSession: (_mid: string, name: string, sid: string) => { stored[name] = sid },
+    }
+    const adapter = mockAdapter("gemini")
+    const runner = new CouncilRunner({
+      router: mockAdapter("router") as any,
+      adapters: [adapter as any],
+      masterSessionId: "master-1",
+      sessionStore,
+    })
+    await runner.council("test", [])
+    expect(stored["gemini"]).toBe("gemini-session")
+  })
+
+  it("passes stored sessionId to agent on subsequent call", async () => {
+    let capturedOptions: any
+    const adapter = {
+      name: "gemini",
+      query: async (_p: string, _c: unknown, opts?: any) => {
+        capturedOptions = opts
+        return { agent: "gemini", content: "resp", durationMs: 0, sessionId: "gemini-session" }
+      },
+      isAvailable: async () => true,
+      getModels: async () => [],
+    }
+    const sessionStore = {
+      getAgentSession: (_mid: string, name: string) => name === "gemini" ? "existing-session" : null,
+      setAgentSession: () => {},
+    }
+    const runner = new CouncilRunner({
+      router: mockAdapter("router") as any,
+      adapters: [adapter as any],
+      masterSessionId: "master-1",
+      sessionStore,
+    })
+    await runner.council("test", [])
+    expect(capturedOptions?.agentSessionId).toBe("existing-session")
   })
 })

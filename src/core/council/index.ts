@@ -1,4 +1,4 @@
-import type { AgentAdapter, AgentResponse, Message } from "../adapters/types"
+import type { AgentAdapter, AgentResponse, Message, QueryOptions } from "../adapters/types"
 
 export type CouncilResult = {
   responses: AgentResponse[]
@@ -20,15 +20,86 @@ export type DebateResult = {
   roundCount: number
 }
 
+type AgentSessionStore = {
+  getAgentSession(masterSessionId: string, agentName: string): string | null
+  setAgentSession(masterSessionId: string, agentName: string, agentSessionId: string): void
+}
+
 export class CouncilRunner {
   private router: AgentAdapter
   private adapters: AgentAdapter[]
   private modelOverrides: Record<string, string[]>
+  private masterSessionId?: string
+  private sessionStore?: AgentSessionStore
 
-  constructor(input: { router: AgentAdapter; adapters: AgentAdapter[]; modelOverrides?: Record<string, string[]> }) {
+  constructor(input: {
+    router: AgentAdapter
+    adapters: AgentAdapter[]
+    modelOverrides?: Record<string, string[]>
+    masterSessionId?: string
+    sessionStore?: AgentSessionStore
+  }) {
     this.router = input.router
     this.adapters = input.adapters
     this.modelOverrides = input.modelOverrides ?? {}
+    this.masterSessionId = input.masterSessionId
+    this.sessionStore = input.sessionStore
+  }
+
+  private getStoredSessionId(agentName: string): string | undefined {
+    if (!this.masterSessionId || !this.sessionStore) return undefined
+    return this.sessionStore.getAgentSession(this.masterSessionId, agentName) ?? undefined
+  }
+
+  private saveSessionId(agentName: string, sessionId: string): void {
+    if (!this.masterSessionId || !this.sessionStore) return
+    this.sessionStore.setAgentSession(this.masterSessionId, agentName, sessionId)
+  }
+
+  private buildSystemPrompt(agentName: string, mode: string): string {
+    const peers = [...this.adapters, this.router]
+      .map(a => a.name)
+      .filter(n => n !== agentName)
+    return `You are ${agentName} in a multi-agent discussion with ${peers.join(", ")}. Mode: ${mode}. Build on peer responses when provided.`
+  }
+
+  private buildDeltaMessage(userMessage: string, context: Message[], excludeAgent?: string): string {
+    let lastUserIdx = -1
+    for (let i = context.length - 1; i >= 0; i--) {
+      if (context[i].role === "user") { lastUserIdx = i; break }
+    }
+    if (lastUserIdx < 0) return userMessage
+
+    const peerResponses = context
+      .slice(lastUserIdx + 1)
+      .filter(m => m.role === "agent" && m.agent && m.agent !== excludeAgent)
+
+    if (peerResponses.length === 0) return userMessage
+
+    const peers = peerResponses.map(r => `[${r.agent}]: ${r.content}`).join("\n")
+    return `[User]: ${userMessage}\n\n[Peer responses]:\n${peers}\n\nYour response:`
+  }
+
+  private async queryAgent(
+    agent: AgentAdapter,
+    prompt: string,
+    context: Message[],
+    mode: string,
+    model?: string,
+  ): Promise<AgentResponse> {
+    const agentSessionId = this.getStoredSessionId(agent.name)
+    const isResume = agentSessionId !== undefined
+    const deltaPrompt = isResume ? this.buildDeltaMessage(prompt, context, agent.name) : prompt
+    const options: QueryOptions = {
+      model,
+      agentSessionId,
+      systemPrompt: isResume ? undefined : this.buildSystemPrompt(agent.name, mode),
+    }
+    const resp = isResume
+      ? await agent.query(deltaPrompt, [], options)
+      : await agent.query(prompt, context, options)
+    if (resp.sessionId) this.saveSessionId(agent.name, resp.sessionId)
+    return resp
   }
 
   private async getAgentModelPrompt(): Promise<string> {
@@ -44,7 +115,7 @@ export class CouncilRunner {
 
   async council(prompt: string, context: Message[]): Promise<CouncilResult> {
     const respondents = this.adapters.filter(a => a.name !== this.router.name)
-    const responses = await Promise.all(respondents.map(a => a.query(prompt, context)))
+    const responses = await Promise.all(respondents.map(a => this.queryAgent(a, prompt, context, "council")))
     const synthesisPrompt = [
       `You asked: "${prompt}"`,
       `Agent responses:`,
@@ -55,7 +126,9 @@ export class CouncilRunner {
     return { responses, synthesis: synthesis.content }
   }
 
-  async dispatch(prompt: string, context: Message[]): Promise<AgentResponse> {
+  async dispatch(prompt: string, context: Message[], options?: {
+    onRouted?: (agent: string) => void
+  }): Promise<AgentResponse> {
     const agentModels = await this.getAgentModelPrompt()
     const routerResp = await this.router.query(
       `Task: "${prompt}"\nAvailable agents & models:\n${agentModels}\nRespond with JSON only: { "assignTo": "<agent name>", "model": "<model id>" }`,
@@ -69,11 +142,15 @@ export class CouncilRunner {
     }
     const agent = this.adapters.find(a => a.name === selection.assignTo) ?? this.adapters[0]
     if (!agent) throw new Error("No agent available for dispatch")
-    return agent.query(prompt, context, { model: selection.model })
+    options?.onRouted?.(agent.name)
+    return this.queryAgent(agent, prompt, context, "dispatch", selection.model)
   }
 
-  async pipeline(prompt: string, context: Message[]): Promise<PipelineResult> {
-    // Router picks executor
+  async pipeline(prompt: string, context: Message[], options?: {
+    onRouted?: (executor: string) => void
+    onReviewing?: (reviewers: string[]) => void
+  }): Promise<PipelineResult> {
+    // Router picks executor (routing call — direct, no session tracking)
     const agentModels = await this.getAgentModelPrompt()
     const routerResp = await this.router.query(
       `Task: "${prompt}"\nAvailable agents & models:\n${agentModels}\nRespond with JSON only: { "assignTo": "<agent name>", "model": "<model id>" }`,
@@ -87,12 +164,14 @@ export class CouncilRunner {
     }
     const executor = this.adapters.find(a => a.name === selection.assignTo) ?? this.adapters[0]
     if (!executor) throw new Error("No executor agent available")
+    options?.onRouted?.(executor.name)
 
     // Executor does the work
-    const taskResp = await executor.query(prompt, context, { model: selection.model })
+    const taskResp = await this.queryAgent(executor, prompt, context, "pipeline", selection.model)
 
     // Peers review (everyone except executor and router)
     const reviewers = this.adapters.filter(a => a.name !== executor.name && a.name !== this.router.name)
+    options?.onReviewing?.(reviewers.map(a => a.name))
     const reviewPrompt = [
       `Task: "${prompt}"`,
       `Result:\n${taskResp.content}`,
@@ -100,7 +179,7 @@ export class CouncilRunner {
     ].join("\n")
 
     const reviews = await Promise.all(reviewers.map(async a => {
-      const r = await a.query(reviewPrompt, [])
+      const r = await this.queryAgent(a, reviewPrompt, [], "pipeline")
       try {
         const parsed = JSON.parse(r.content)
         return {
@@ -140,9 +219,11 @@ export class CouncilRunner {
     // Round 1: all agents give their initial response (plain text, no pass/fail)
     const round1 = await Promise.all(
       agents.map(async a => {
-        const resp = await a.query(
+        const resp = await this.queryAgent(
+          a,
           `Debate topic: "${prompt}"\n\nGive your initial position.`,
           context,
+          "debate",
         )
         return { agent: a.name, content: resp.content }
       })
@@ -165,9 +246,11 @@ export class CouncilRunner {
       const debateHistory = history()
       const roundResponses = await Promise.all(
         agents.map(async a => {
-          const resp = await a.query(
+          const resp = await this.queryAgent(
+            a,
             `Debate topic: "${prompt}"\n\nDebate so far:\n${debateHistory}\n\nDo you have anything to add or challenge? Respond with JSON only:\n{ "pass": true } if you have nothing new to add\n{ "pass": false, "content": "<your response>" } if you want to speak`,
             context,
+            "debate",
           )
           try {
             const parsed = JSON.parse(resp.content)

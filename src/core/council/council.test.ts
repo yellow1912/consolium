@@ -172,6 +172,7 @@ describe("debate mode", () => {
     })
     const result = await runner.debate("topic", [], { maxRounds: 2 })
     expect(result.roundCount).toBe(2)
+    expect(result.rounds).toHaveLength(2)
     expect(result.consensusReached).toBe(false)
   })
 
@@ -182,5 +183,26 @@ describe("debate mode", () => {
     })
     const result = await runner.debate("topic", [], { maxRounds: 1 })
     expect(result.synthesis).toBe("final synthesis")
+  })
+
+  it("router synthesizes after consensus is reached", async () => {
+    let codexCall = 0
+    const codexAdapter: import("../adapters/types").AgentAdapter = {
+      name: "codex",
+      isAvailable: async () => true,
+      getModels: async () => [],
+      query: async () => {
+        codexCall++
+        if (codexCall === 1) return { agent: "codex", content: "codex says something", durationMs: 1 }
+        return { agent: "codex", content: JSON.stringify({ pass: true }), durationMs: 1 }
+      },
+    }
+    const runner2 = new CouncilRunner({
+      router: mock("claude", "consensus synthesis"),
+      adapters: [codexAdapter, mock("gemini", JSON.stringify({ pass: true }))],
+    })
+    const result = await runner2.debate("topic", [], { maxRounds: 5 })
+    expect(result.consensusReached).toBe(true)
+    expect(result.synthesis).toBe("consensus synthesis")
   })
 })

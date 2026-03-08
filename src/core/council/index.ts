@@ -127,7 +127,7 @@ export class CouncilRunner {
   ): Promise<DebateResult> {
     const maxRounds = options.maxRounds ?? 5
     const rounds: DebateRound[] = []
-    const agents = this.adapters
+    const agents = this.adapters.filter(a => a.name !== this.router.name)
 
     const history = (): string =>
       rounds.flatMap((round, i) =>

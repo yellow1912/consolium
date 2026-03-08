@@ -1,4 +1,5 @@
 import * as readline from "node:readline"
+import { buildCompleter } from "./completer"
 import { SessionManager } from "../core/session/index"
 import { CouncilRunner } from "../core/council/index"
 import { buildDefaultRegistry, buildPersonaRegistry, type AdapterRegistry } from "../core/adapters/registry"
@@ -33,6 +34,8 @@ export async function startCLI(options: {
 
   const modelCache = new ModelCache()
   await modelCache.load()
+
+  const completer = buildCompleter(registry, modelCache)
 
   const TTL_MS = 24 * 60 * 60 * 1000 // 24h
 
@@ -84,6 +87,7 @@ export async function startCLI(options: {
     input: process.stdin,
     output: process.stdout,
     terminal: true,
+    completer,
   })
 
   console.log(`\nconsilium — session ${session.id}`)

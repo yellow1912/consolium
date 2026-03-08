@@ -136,7 +136,7 @@ export async function startCLI(options: {
           context.push({ role: "agent", agent: "pipeline", content: r.taskContent })
         } else {
           // debate mode — reset autopilot for this debate
-          debateAutopilot = false
+          setDebateAutopilot(false)
           const r = await runner.debate(trimmed, context, {
             maxRounds: debateMaxRounds,
             onRoundComplete: async (roundNum, roundResponses) => {

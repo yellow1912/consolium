@@ -5,6 +5,7 @@ import type { AgentAdapter, Message } from "../adapters/types"
 const mock = (name: string, response: string): AgentAdapter => ({
   name,
   isAvailable: async () => true,
+  getModels: async () => [],
   query: async () => ({ agent: name, content: response, durationMs: 1 }),
 })
 
@@ -26,6 +27,7 @@ describe("council mode", () => {
     const trackingAdapter = (name: string): AgentAdapter => ({
       name,
       isAvailable: async () => true,
+      getModels: async () => [],
       query: async () => { called.push(name); return { agent: name, content: "ok", durationMs: 1 } },
     })
     const runner = new CouncilRunner({

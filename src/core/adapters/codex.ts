@@ -11,7 +11,7 @@ export class CodexAdapter implements AgentAdapter {
     catch { return false }
   }
 
-  protected async _query(prompt: string): Promise<string> {
+  private async _query(prompt: string): Promise<string> {
     const { Codex } = await import("@openai/codex-sdk")
     const codex = new Codex()
     const result = await codex.query({ prompt, model: this.model })

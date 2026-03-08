@@ -13,7 +13,7 @@ export class ClaudeAdapter implements AgentAdapter {
     catch { return false }
   }
 
-  protected async _query(prompt: string): Promise<string> {
+  private async _query(prompt: string): Promise<string> {
     const { query } = await import("@anthropic-ai/claude-agent-sdk")
     const chunks: string[] = []
     for await (const event of query({ prompt, model: this.model, tools: [] })) {

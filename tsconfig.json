@@ -5,8 +5,7 @@
     "moduleResolution": "bundler",
     "strict": true,
     "skipLibCheck": true,
-    "outDir": "dist",
-    "types": ["bun-types"]
+"types": ["bun-types"]
   },
   "include": ["src/**/*"]
 }

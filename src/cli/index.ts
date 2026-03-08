@@ -91,6 +91,7 @@ export async function startCLI(options: {
       const slash = parseSlash(trimmed)
       if (slash) {
         await handleSlash(slash, { mode, routerName, registry, sessionMgr, context, modelOverrides, modelCache,
+          refreshModels,
           setMode: (m: Mode) => { mode = m },
           setRouter: (r: string) => { routerName = r },
           rebuildRunner: () => { runner = buildRunner() },
@@ -145,6 +146,7 @@ type SlashCtx = {
   context: Message[]
   modelOverrides: Map<string, string>
   modelCache: ModelCache
+  refreshModels: () => Promise<void>
   setMode: (m: Mode) => void
   setRouter: (r: string) => void
   rebuildRunner: () => void
@@ -174,16 +176,12 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
     case "models": {
       if (slash.args[0] === "refresh") {
         console.log("Refreshing models...")
-        await Promise.all(ctx.registry.all().map(async a => {
-          try {
-            const models = await a.getModels()
-            ctx.modelCache.set(a.name, models.map(m => m.id))
-            console.log(`  ${a.name}: ${models.map(m => m.id).join(", ")}`)
-          } catch {
-            console.log(`  ${a.name}: (fetch failed, keeping cache)`)
-          }
-        }))
-        await ctx.modelCache.save()
+        await ctx.refreshModels()
+        ctx.registry.all().forEach(a => {
+          const models = ctx.modelCache.get(a.name)
+          console.log(`  ${a.name}: ${models.length > 0 ? models.join(", ") : "(fetch failed, keeping cache)"}`)
+        })
+        ctx.rebuildRunner()
       } else {
         ctx.registry.all().forEach(a => {
           const models = ctx.modelCache.get(a.name)
@@ -202,6 +200,11 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
       const [agentName, modelId] = slash.args
       if (!agentName) {
         console.log("usage: /model <agent> <model-id> | /model <agent> clear")
+        break
+      }
+      const knownAgents = ctx.registry.all().map(a => a.name)
+      if (!knownAgents.includes(agentName)) {
+        console.log(`unknown agent: ${agentName}. Known agents: ${knownAgents.join(", ")}`)
         break
       }
       if (modelId === "clear") {

@@ -175,7 +175,7 @@ export class CouncilRunner {
           `Consensus was reached. Synthesize the final position.`,
         ].join("\n")
         const synthesis = await this.router.query(synthesisPrompt, [])
-        return { rounds, synthesis: synthesis.content, consensusReached: true, roundCount: rounds.length }
+        return { rounds, synthesis: synthesis.content, consensusReached: true, roundCount: round }
       }
 
       rounds.push(nonPass)
@@ -188,6 +188,6 @@ export class CouncilRunner {
       `The debate reached the maximum number of rounds (${maxRounds}). Synthesize the best conclusion from what was said.`,
     ].join("\n")
     const synthesis = await this.router.query(synthesisPrompt, [])
-    return { rounds, synthesis: synthesis.content, consensusReached: false, roundCount: rounds.length }
+    return { rounds, synthesis: synthesis.content, consensusReached: false, roundCount: maxRounds }
   }
 }

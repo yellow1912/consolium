@@ -3,11 +3,13 @@ import { SubprocessAdapter } from "./base"
 export class GeminiAdapter extends SubprocessAdapter {
   readonly name = "gemini"
   readonly bin = "gemini"
-  private model: string
+  private model: string | null
 
-  constructor(model = "gemini-2.0-flash") { super(); this.model = model }
+  constructor(model: string | null = null) { super(); this.model = model }
 
   buildArgs(prompt: string): string[] {
-    return ["-m", this.model, prompt]
+    const args = ["-p", prompt, "--yolo"]
+    if (this.model) args.push("-m", this.model)
+    return args
   }
 }

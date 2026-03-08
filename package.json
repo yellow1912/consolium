@@ -2,13 +2,15 @@
   "name": "consilium",
   "version": "0.1.0",
   "type": "module",
-  "bin": { "consilium": "./src/index.ts" },
+  "bin": {
+    "consilium": "./src/index.ts"
+  },
   "scripts": {
     "start": "bun src/index.ts",
     "test": "bun test"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "latest",
+    "@anthropic-ai/sdk": "^0.78.0",
     "@modelcontextprotocol/sdk": "latest",
     "@openai/codex-sdk": "latest",
     "drizzle-orm": "latest",

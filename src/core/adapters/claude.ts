@@ -13,6 +13,8 @@ export class ClaudeAdapter extends SubprocessAdapter {
   readonly bin = "claude"
   private model: string | null
   private role: string
+  private _sessionId = ""
+  private _isResume = false
 
   constructor({ name = "claude", model = null, role = "" }: ClaudeAdapterOptions = {}) {
     super()
@@ -33,6 +35,13 @@ export class ClaudeAdapter extends SubprocessAdapter {
     const args = ["--print"]
     const model = options?.model ?? this.model
     if (model) args.push("--model", model)
+    if (this._isResume) {
+      args.push("--resume", this._sessionId)
+    } else {
+      args.push("--session-id", this._sessionId)
+      const sysPrompt = options?.systemPrompt ?? this.role
+      if (sysPrompt) args.push("--system-prompt", sysPrompt)
+    }
     args.push(prompt)
     return args
   }
@@ -50,36 +59,18 @@ export class ClaudeAdapter extends SubprocessAdapter {
   }
 
   override async query(prompt: string, context: Message[], options?: QueryOptions): Promise<AgentResponse> {
-    const isResume = !!options?.agentSessionId
-    const sessionId = options?.agentSessionId ?? randomUUID()
-
-    // When resuming a session, CouncilRunner has already built the delta — pass as-is.
-    // Otherwise flatten context for backward compatibility.
-    const effectivePrompt = isResume || context.length === 0
+    this._isResume = !!options?.agentSessionId
+    this._sessionId = options?.agentSessionId ?? randomUUID()
+    const sessionId = this._sessionId
+    const effectivePrompt = this._isResume || context.length === 0
       ? prompt
       : this.buildContextPrompt(prompt, context)
-
-    const sessionArgs = isResume
-      ? ["--resume", sessionId]
-      : ["--session-id", sessionId, ...(options?.systemPrompt ?? this.role ? ["--system-prompt", options?.systemPrompt ?? this.role] : [])]
-
-    const buildArgsWithSession = (opts?: QueryOptions): string[] => {
-      const args = ["--print"]
-      const model = opts?.model ?? this.model
-      if (model) args.push("--model", model)
-      args.push(...sessionArgs)
-      args.push(effectivePrompt)
-      return args
-    }
-
     const start = Date.now()
-    let { exitCode, stdout, stderr } = await this.spawnAndRead(buildArgsWithSession(options))
-
+    let { exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(effectivePrompt, options))
     if (exitCode !== 0 && options?.model && stderr.toLowerCase().includes("model")) {
       console.warn(`[claude] model '${options.model}' rejected, retrying with default`)
-      ;({ exitCode, stdout, stderr } = await this.spawnAndRead(buildArgsWithSession({ ...options, model: undefined })))
+      ;({ exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(effectivePrompt, { ...options, model: undefined })))
     }
-
     if (exitCode !== 0) throw new Error(`claude exited with code ${exitCode}: ${stderr}`)
     return { agent: this.name, content: stdout.trim(), durationMs: Date.now() - start, sessionId }
   }

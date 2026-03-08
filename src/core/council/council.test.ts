@@ -184,6 +184,25 @@ describe("debate mode", () => {
     expect(result.synthesis).toBe("final synthesis")
   })
 
+  it("onRoundComplete returning false triggers early exit with consensusReached: false", async () => {
+    let callCount = 0
+    const runner = new CouncilRunner({
+      router: mock("claude", "early synthesis"),
+      adapters: [mock("codex", "codex opinion"), mock("gemini", "gemini opinion")],
+    })
+    const result = await runner.debate("topic", [], {
+      maxRounds: 5,
+      onRoundComplete: async () => {
+        callCount++
+        return false // always stop after round 1
+      },
+    })
+    expect(result.consensusReached).toBe(false)
+    expect(result.synthesis).toBe("early synthesis")
+    expect(callCount).toBe(1) // callback was called once (after round 1) then returned false
+    expect(result.rounds).toHaveLength(1) // only round 1 was stored
+  })
+
   it("router synthesizes after consensus is reached", async () => {
     let codexCall = 0
     const codexAdapter: import("../adapters/types").AgentAdapter = {

@@ -131,7 +131,8 @@ export async function startCLI(options: {
           sessionMgr.addMessage(session.id, "agent", "pipeline", r.taskContent)
           context.push({ role: "agent", agent: "pipeline", content: r.taskContent })
         } else {
-          // debate mode
+          // debate mode — reset autopilot for this debate
+          debateAutopilot = false
           const r = await runner.debate(trimmed, context, {
             maxRounds: debateMaxRounds,
             onRoundComplete: async (roundNum, roundResponses) => {
@@ -142,7 +143,11 @@ export async function startCLI(options: {
               if (debateAutopilot) return undefined
               console.log(`\nRound ${roundNum} complete. Press Enter to continue, or type to steer (/done to end, /debate autopilot on to stop asking):`)
               return new Promise<boolean | undefined>(resolve => {
+                if (rl.closed) return resolve(undefined)
+                const onClose = () => resolve(undefined)
+                rl.once("close", onClose)
                 rl.question("you> ", input => {
+                  rl.removeListener("close", onClose)
                   const t = input.trim()
                   if (t === "/done") return resolve(false)
                   if (t === "/debate autopilot on") { debateAutopilot = true; return resolve(undefined) }

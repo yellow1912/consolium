@@ -181,13 +181,10 @@ export class CouncilRunner {
       )
       const nonPass = roundResponses.filter((r): r is { agent: string; content: string } => r !== null)
 
-      if (nonPass.length > 0) {
-        rounds.push(nonPass)
-      }
-
       if (options.onRoundComplete) {
         const cont = await options.onRoundComplete(round, nonPass)
         if (cont === false) {
+          if (nonPass.length > 0) rounds.push(nonPass)
           const synthesis = await this.router.query(
             `Debate topic: "${prompt}"\n\nFull debate:\n${history()}\n\nSynthesize the best conclusion.`,
             [],
@@ -206,6 +203,8 @@ export class CouncilRunner {
         const synthesis = await this.router.query(synthesisPrompt, [])
         return { rounds, synthesis: synthesis.content, consensusReached: true, roundCount: round }
       }
+
+      rounds.push(nonPass)
     }
 
     // Max rounds reached

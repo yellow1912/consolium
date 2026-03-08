@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import type { AgentAdapter, AgentResponse, Message, ModelInfo, QueryOptions } from "./types"
 
 type ClaudeAdapterOptions = {
@@ -30,12 +31,22 @@ export class ClaudeAdapter implements AgentAdapter {
     ]
   }
 
-  private async _query(prompt: string, options?: QueryOptions): Promise<string> {
+  private async _query(prompt: string, options?: QueryOptions): Promise<{ content: string; sessionId: string }> {
+    const sessionId = options?.agentSessionId ?? randomUUID()
+
     const runWith = async (opts?: QueryOptions): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
       const args = ["--print"]
       const model = opts?.model ?? this.model
       if (model) args.push("--model", model)
-      if (this.role) args.push("--system-prompt", this.role)
+
+      if (opts?.agentSessionId) {
+        args.push("--resume", opts.agentSessionId)
+      } else {
+        args.push("--session-id", sessionId)
+        const sysPrompt = opts?.systemPrompt ?? this.role
+        if (sysPrompt) args.push("--system-prompt", sysPrompt)
+      }
+
       args.push(prompt)
       const env = { ...process.env }
       delete env.CLAUDECODE
@@ -49,25 +60,22 @@ export class ClaudeAdapter implements AgentAdapter {
     }
 
     let { exitCode, stdout, stderr } = await runWith(options)
-
     if (exitCode !== 0 && options?.model && stderr.toLowerCase().includes("model")) {
-      // Heuristic: model rejected — retry with adapter default
       console.warn(`[claude] model '${options.model}' rejected, retrying with default`)
-      ;({ exitCode, stdout, stderr } = await runWith())
+      ;({ exitCode, stdout, stderr } = await runWith({ ...options, model: undefined }))
     }
-
-    if (exitCode !== 0) {
-      throw new Error(`claude exited with code ${exitCode}: ${stderr}`)
-    }
-    return stdout.trim()
+    if (exitCode !== 0) throw new Error(`claude exited with code ${exitCode}: ${stderr}`)
+    return { content: stdout.trim(), sessionId }
   }
 
   async query(prompt: string, context: Message[], options?: QueryOptions): Promise<AgentResponse> {
-    const contextStr = context.length > 0
-      ? context.map(m => `[${m.agent ?? m.role}]: ${m.content}`).join("\n") + `\n\n[user]: ${prompt}`
-      : prompt
+    // When resuming a session, CouncilRunner has already built the delta — pass as-is.
+    // Otherwise flatten context for backward compatibility.
+    const effectivePrompt = options?.agentSessionId || context.length === 0
+      ? prompt
+      : context.map(m => `[${m.agent ?? m.role}]: ${m.content}`).join("\n") + `\n\n[user]: ${prompt}`
     const start = Date.now()
-    const content = await this._query(contextStr, options)
-    return { agent: this.name, content, durationMs: Date.now() - start }
+    const { content, sessionId } = await this._query(effectivePrompt, options)
+    return { agent: this.name, content, durationMs: Date.now() - start, sessionId }
   }
 }

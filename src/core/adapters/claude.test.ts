@@ -9,7 +9,7 @@ describe("ClaudeAdapter", () => {
   it("query returns AgentResponse shape", async () => {
     const adapter = new ClaudeAdapter()
     // Override the protected _query method for testing without real API calls
-    ;(adapter as any)._query = async () => "mocked response"
+    ;(adapter as any)._query = async () => ({ content: "mocked response", sessionId: "test-session" })
     const result = await adapter.query("hello", [])
     expect(result.agent).toBe("claude")
     expect(result.content).toBe("mocked response")
@@ -19,10 +19,49 @@ describe("ClaudeAdapter", () => {
   it("query builds context prompt correctly", async () => {
     const adapter = new ClaudeAdapter()
     let capturedPrompt = ""
-    ;(adapter as any)._query = async (p: string) => { capturedPrompt = p; return "ok" }
+    ;(adapter as any)._query = async (p: string) => { capturedPrompt = p; return { content: "ok", sessionId: "test-session" } }
     const context = [{ role: "user" as const, agent: null, content: "prior message" }]
     await adapter.query("new prompt", context)
     expect(capturedPrompt).toContain("prior message")
     expect(capturedPrompt).toContain("new prompt")
+  })
+})
+
+describe("ClaudeAdapter session flags", () => {
+  it("uses --resume when agentSessionId is provided", async () => {
+    const capturedArgs: string[][] = []
+    const origSpawn = Bun.spawn.bind(Bun)
+    // @ts-ignore
+    Bun.spawn = (args: string[], opts: unknown) => {
+      capturedArgs.push(args as string[])
+      return origSpawn(["echo", "hi"], opts as any)
+    }
+    const adapter = new ClaudeAdapter()
+    try { await adapter.query("hello", [], { agentSessionId: "my-session-id" }) } catch {}
+    // @ts-ignore
+    Bun.spawn = origSpawn
+    const call = capturedArgs.find(a => a[0] === "claude")
+    expect(call).toBeDefined()
+    expect(call).toContain("--resume")
+    expect(call).toContain("my-session-id")
+    expect(call).not.toContain("--session-id")
+  })
+
+  it("uses --session-id when no agentSessionId", async () => {
+    const capturedArgs: string[][] = []
+    const origSpawn = Bun.spawn.bind(Bun)
+    // @ts-ignore
+    Bun.spawn = (args: string[], opts: unknown) => {
+      capturedArgs.push(args as string[])
+      return origSpawn(["echo", "hi"], opts as any)
+    }
+    const adapter = new ClaudeAdapter()
+    try { await adapter.query("hello", []) } catch {}
+    // @ts-ignore
+    Bun.spawn = origSpawn
+    const call = capturedArgs.find(a => a[0] === "claude")
+    expect(call).toBeDefined()
+    expect(call).toContain("--session-id")
+    expect(call).not.toContain("--resume")
   })
 })

@@ -10,6 +10,25 @@ import { ModelCache } from "../core/models/cache"
 
 type Mode = "council" | "dispatch" | "pipeline" | "debate"
 
+function spin(text: string): { stop: () => void; update: (t: string) => void } {
+  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+  let i = 0
+  let current = text
+  const interval = setInterval(() => {
+    process.stdout.write(`\r${frames[i++ % frames.length]} ${current}`)
+  }, 80)
+  return {
+    stop: () => {
+      clearInterval(interval)
+      process.stdout.write(`\r${" ".repeat(current.length + 3)}\r`)
+    },
+    update: (t: string) => {
+      process.stdout.write(`\r${" ".repeat(current.length + 3)}\r`)
+      current = t
+    },
+  }
+}
+
 export async function startCLI(options: {
   mode?: Mode
   router?: string
@@ -79,6 +98,8 @@ export async function startCLI(options: {
       router,
       adapters: registry.except(routerName),
       modelOverrides: buildModelOverrides(),
+      masterSessionId: session.id,
+      sessionStore: sessionMgr,
     })
   }
 
@@ -116,7 +137,9 @@ export async function startCLI(options: {
       // Natural language command interpretation
       const classifier = registry.get(routerName)
       if (classifier) {
+        const { stop: stopSpin } = spin("thinking...")
         const intent = await classifyIntent(trimmed, classifier, registry)
+        stopSpin()
         if (intent.type === "command") {
           await handleSlash({ command: intent.command, args: intent.args }, { mode, routerName, registry, sessionMgr, context, modelOverrides, modelCache, rl,
             refreshModels,
@@ -136,18 +159,30 @@ export async function startCLI(options: {
 
       try {
         if (mode === "council") {
+          const agents = registry.all().filter(a => a.name !== routerName).map(a => a.name).join(", ")
+          const { stop: stopSpin } = spin(`[${agents}] thinking...`)
           const r = await runner.council(trimmed, context)
+          stopSpin()
           r.responses.forEach(resp => console.log(`\n[${resp.agent}]: ${resp.content}`))
           console.log(`\n[synthesis]: ${r.synthesis}`)
           sessionMgr.addMessage(session.id, "agent", "synthesis", r.synthesis)
           context.push({ role: "agent", agent: "synthesis", content: r.synthesis })
         } else if (mode === "dispatch") {
-          const r = await runner.dispatch(trimmed, context)
+          const { stop: stopSpin, update: updateSpin } = spin("routing...")
+          const r = await runner.dispatch(trimmed, context, {
+            onRouted: (agent) => updateSpin(`[${agent}] thinking...`),
+          })
+          stopSpin()
           console.log(`\n[${r.agent}]: ${r.content}`)
           sessionMgr.addMessage(session.id, "agent", r.agent, r.content)
           context.push({ role: "agent", agent: r.agent, content: r.content })
         } else if (mode === "pipeline") {
-          const r = await runner.pipeline(trimmed, context)
+          const { stop: stopSpin, update: updateSpin } = spin("routing...")
+          const r = await runner.pipeline(trimmed, context, {
+            onRouted: (executor) => updateSpin(`[${executor}] executing...`),
+            onReviewing: (reviewers) => updateSpin(`[${reviewers.join(", ")}] reviewing...`),
+          })
+          stopSpin()
           console.log(`\n[executor result]: ${r.taskContent}`)
           r.reviews.forEach(rev =>
             console.log(`\n[${rev.reviewer} review]: ${rev.content} (${rev.verdict})`)
@@ -159,14 +194,20 @@ export async function startCLI(options: {
         } else {
           // debate mode — reset autopilot for this debate
           setDebateAutopilot(false)
+          const debateAgents = registry.all().filter(a => a.name !== routerName).map(a => a.name).join(", ")
+          const { stop: stopSpin, update: updateSpin } = spin(`[${debateAgents}] round 1...`)
           const r = await runner.debate(trimmed, context, {
             maxRounds: debateMaxRounds,
             onRoundComplete: async (roundNum, roundResponses) => {
+              stopSpin()
               roundResponses.forEach(resp => console.log(`\n[${resp.agent}]: ${resp.content}`))
               if (roundResponses.length === 0) {
                 console.log(`\nRound ${roundNum}: all agents passed.`)
               }
-              if (debateAutopilot) return undefined
+              if (debateAutopilot) {
+                updateSpin(`[${debateAgents}] round ${roundNum + 1}...`)
+                return undefined
+              }
               console.log(`\nRound ${roundNum} complete. Press Enter to continue, or type to steer (/done to end, /debate autopilot on to stop asking):`)
               return new Promise<boolean | undefined>(resolve => {
                 if (rl.closed) return resolve(undefined)
@@ -176,11 +217,12 @@ export async function startCLI(options: {
                   rl.removeListener("close", onClose)
                   const t = input.trim()
                   if (t === "/done") return resolve(false)
-                  if (t === "/debate autopilot on") { setDebateAutopilot(true); return resolve(undefined) }
+                  if (t === "/debate autopilot on") { setDebateAutopilot(true); updateSpin(`[${debateAgents}] round ${roundNum + 1}...`); return resolve(undefined) }
                   if (t) {
                     context.push({ role: "user", agent: null, content: t })
                     sessionMgr.addMessage(session.id, "user", null, t)
                   }
+                  updateSpin(`[${debateAgents}] round ${roundNum + 1}...`)
                   resolve(undefined)
                 })
               })

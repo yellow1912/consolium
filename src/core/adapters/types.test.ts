@@ -28,3 +28,21 @@ describe("AgentAdapter interface", () => {
     expect(received[0].content).toBe("prior message")
   })
 })
+
+describe("extended types", () => {
+  it("QueryOptions accepts agentSessionId and systemPrompt", () => {
+    const opts: import("./types").QueryOptions = {
+      model: "claude-sonnet-4-6",
+      agentSessionId: "some-uuid",
+      systemPrompt: "You are an assistant.",
+    }
+    expect(opts.agentSessionId).toBe("some-uuid")
+    expect(opts.systemPrompt).toBe("You are an assistant.")
+  })
+  it("AgentResponse accepts optional sessionId", () => {
+    const resp: import("./types").AgentResponse = {
+      agent: "claude", content: "hi", durationMs: 10, sessionId: "s-uuid",
+    }
+    expect(resp.sessionId).toBe("s-uuid")
+  })
+})

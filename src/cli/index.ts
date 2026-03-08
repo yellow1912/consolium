@@ -134,11 +134,12 @@ export async function startCLI(options: {
           // debate mode
           const r = await runner.debate(trimmed, context, {
             maxRounds: debateMaxRounds,
-            onRoundComplete: debateAutopilot ? undefined : async (roundNum, roundResponses) => {
+            onRoundComplete: async (roundNum, roundResponses) => {
               roundResponses.forEach(resp => console.log(`\n[${resp.agent}]: ${resp.content}`))
               if (roundResponses.length === 0) {
                 console.log(`\nRound ${roundNum}: all agents passed.`)
               }
+              if (debateAutopilot) return undefined
               console.log(`\nRound ${roundNum} complete. Press Enter to continue, or type to steer (/done to end, /debate autopilot on to stop asking):`)
               return new Promise<boolean | undefined>(resolve => {
                 rl.question("you> ", input => {
@@ -154,11 +155,6 @@ export async function startCLI(options: {
               })
             },
           })
-          if (debateAutopilot) {
-            r.rounds.forEach((round, i) => {
-              round.forEach(resp => console.log(`\n[${resp.agent}] round ${i + 1}: ${resp.content}`))
-            })
-          }
           const outcome = r.consensusReached
             ? `Consensus reached after ${r.roundCount} rounds`
             : `Debate concluded (max rounds reached after ${r.roundCount} rounds)`

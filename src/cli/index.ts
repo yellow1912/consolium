@@ -4,6 +4,7 @@ import { SessionManager } from "../core/session/index"
 import { CouncilRunner } from "../core/council/index"
 import { buildDefaultRegistry, buildPersonaRegistry, type AdapterRegistry } from "../core/adapters/registry"
 import { parseSlash } from "./slash"
+import { classifyIntent } from "./intent"
 import type { Message } from "../core/adapters/types"
 import { ModelCache } from "../core/models/cache"
 
@@ -101,7 +102,7 @@ export async function startCLI(options: {
 
       const slash = parseSlash(trimmed)
       if (slash) {
-        await handleSlash(slash, { mode, routerName, registry, sessionMgr, context, modelOverrides, modelCache,
+        await handleSlash(slash, { mode, routerName, registry, sessionMgr, context, modelOverrides, modelCache, rl,
           refreshModels,
           setMode: (m: Mode) => { mode = m },
           setRouter: (r: string) => { routerName = r },
@@ -110,6 +111,23 @@ export async function startCLI(options: {
           setDebateAutopilot,
         })
         return rl.closed || prompt()
+      }
+
+      // Natural language command interpretation
+      const classifier = registry.get(routerName)
+      if (classifier) {
+        const intent = await classifyIntent(trimmed, classifier, registry)
+        if (intent.type === "command") {
+          await handleSlash({ command: intent.command, args: intent.args }, { mode, routerName, registry, sessionMgr, context, modelOverrides, modelCache, rl,
+            refreshModels,
+            setMode: (m: Mode) => { mode = m },
+            setRouter: (r: string) => { routerName = r },
+            rebuildRunner: () => { runner = buildRunner() },
+            setDebateMaxRounds,
+            setDebateAutopilot,
+          })
+          return rl.closed || prompt()
+        }
       }
 
       // Save user message
@@ -196,6 +214,7 @@ type SlashCtx = {
   context: Message[]
   modelOverrides: Map<string, string>
   modelCache: ModelCache
+  rl: readline.Interface
   refreshModels: () => Promise<void>
   setMode: (m: Mode) => void
   setRouter: (r: string) => void
@@ -295,8 +314,13 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
         "/sessions                        — list all sessions",
         "/history                         — show session history",
         "/help                            — show this help",
+        "/exit /quit                      — exit consilium",
       ].join("\n"))
       break
+    case "exit":
+    case "quit":
+      ctx.rl.close()
+      process.exit(0)
     case "debate": {
       const [sub, val] = slash.args
       if (sub === "rounds") {

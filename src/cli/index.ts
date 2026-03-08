@@ -65,6 +65,20 @@ export async function startCLI(options: {
 
   let context: Message[] = sessionMgr.getMessages(session.id)
 
+  function printRecentHistory(messages: Message[], maxMessages = 10, maxChars = 200) {
+    if (messages.length === 0) return
+    const recent = messages.slice(-maxMessages)
+    const skipped = messages.length - recent.length
+    if (skipped > 0) console.log(`  \x1b[2m... ${skipped} earlier messages\x1b[0m`)
+    for (const m of recent) {
+      const sender = m.role === "user" ? "you" : (m.agent ?? m.role)
+      const content = m.content.length > maxChars ? m.content.slice(0, maxChars) + "…" : m.content
+      const line = content.replace(/\n/g, " ")
+      console.log(`  \x1b[2m[${sender}]:\x1b[0m ${line}`)
+    }
+    console.log()
+  }
+
   function switchToSession(s: NonNullable<ReturnType<SessionManager["get"]>>) {
     session = s
     mode = s.mode as Mode
@@ -73,6 +87,7 @@ export async function startCLI(options: {
     runner = buildRunner()
     console.log(`\nconsilium — session ${s.id} (resumed)`)
     console.log(`mode: ${mode}  router: ${routerName}\n`)
+    printRecentHistory(context)
   }
 
   const modelCache = new ModelCache()
@@ -137,7 +152,8 @@ export async function startCLI(options: {
 
   const resumedTag = resumed ? " (resumed)" : ""
   console.log(`\nconsilium — session ${session.id}${resumedTag}`)
-  console.log(`mode: ${mode}  router: ${routerName}`)
+  console.log(`mode: ${mode}  router: ${routerName}\n`)
+  if (resumed) printRecentHistory(context)
   console.log('Type a message or /help for commands. Use /sessions to list all sessions.\n')
 
   const prompt = () =>
@@ -368,7 +384,8 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
           value: s.id,
           hint: s.status,
         })),
-        "Select a session to resume (esc to cancel)"
+        "Select a session to resume (esc to cancel)",
+        ctx.rl
       )
       if (selected) {
         const s = ctx.sessionMgr.get(selected)
@@ -395,7 +412,8 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
             value: s.id,
             hint: s.status,
           })),
-          "Select a session to resume (esc to cancel)"
+          "Select a session to resume (esc to cancel)",
+          ctx.rl
         )
         if (selected) {
           const s = ctx.sessionMgr.get(selected)

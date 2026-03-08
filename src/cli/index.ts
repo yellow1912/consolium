@@ -6,7 +6,7 @@ import { parseSlash } from "./slash"
 import type { Message } from "../core/adapters/types"
 import { ModelCache } from "../core/models/cache"
 
-type Mode = "council" | "dispatch" | "pipeline"
+type Mode = "council" | "dispatch" | "pipeline" | "debate"
 
 export async function startCLI(options: {
   mode?: Mode
@@ -20,6 +20,8 @@ export async function startCLI(options: {
   let mode: Mode = options.mode ?? "dispatch"
   let routerName = options.router ?? "claude"
   const modelOverrides = new Map<string, string>()
+  let debateMaxRounds = 5
+  let debateAutopilot = false
 
   let session = options.resumeId
     ? (sessionMgr.get(options.resumeId) ?? sessionMgr.create({ mode, router: routerName }))
@@ -118,7 +120,7 @@ export async function startCLI(options: {
           console.log(`\n[${r.agent}]: ${r.content}`)
           sessionMgr.addMessage(session.id, "agent", r.agent, r.content)
           context.push({ role: "agent", agent: r.agent, content: r.content })
-        } else {
+        } else if (mode === "pipeline") {
           const r = await runner.pipeline(trimmed, context)
           console.log(`\n[executor result]: ${r.taskContent}`)
           r.reviews.forEach(rev =>
@@ -128,6 +130,42 @@ export async function startCLI(options: {
           console.log(`\n[pipeline]: ${approved}`)
           sessionMgr.addMessage(session.id, "agent", "pipeline", r.taskContent)
           context.push({ role: "agent", agent: "pipeline", content: r.taskContent })
+        } else {
+          // debate mode
+          const r = await runner.debate(trimmed, context, {
+            maxRounds: debateMaxRounds,
+            onRoundComplete: debateAutopilot ? undefined : async (roundNum, roundResponses) => {
+              roundResponses.forEach(resp => console.log(`\n[${resp.agent}]: ${resp.content}`))
+              if (roundResponses.length === 0) {
+                console.log(`\nRound ${roundNum}: all agents passed.`)
+              }
+              console.log(`\nRound ${roundNum} complete. Press Enter to continue, or type to steer (/done to end, /debate autopilot on to stop asking):`)
+              return new Promise<boolean | undefined>(resolve => {
+                rl.question("you> ", input => {
+                  const t = input.trim()
+                  if (t === "/done") return resolve(false)
+                  if (t === "/debate autopilot on") { debateAutopilot = true; return resolve(undefined) }
+                  if (t) {
+                    context.push({ role: "user", agent: null, content: t })
+                    sessionMgr.addMessage(session.id, "user", null, t)
+                  }
+                  resolve(undefined)
+                })
+              })
+            },
+          })
+          if (debateAutopilot) {
+            r.rounds.forEach((round, i) => {
+              round.forEach(resp => console.log(`\n[${resp.agent}] round ${i + 1}: ${resp.content}`))
+            })
+          }
+          const outcome = r.consensusReached
+            ? `Consensus reached after ${r.roundCount} rounds`
+            : `Debate concluded (max rounds reached after ${r.roundCount} rounds)`
+          console.log(`\n[synthesis]: ${r.synthesis}`)
+          console.log(`\n[debate]: ${outcome}`)
+          sessionMgr.addMessage(session.id, "agent", "synthesis", r.synthesis)
+          context.push({ role: "agent", agent: "synthesis", content: r.synthesis })
         }
       } catch (err) {
         console.error(`[error] ${err}`)
@@ -159,11 +197,11 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
   switch (slash.command) {
     case "mode": {
       const m = slash.args[0]
-      if (m === "council" || m === "dispatch" || m === "pipeline") {
+      if (m === "council" || m === "dispatch" || m === "pipeline" || m === "debate") {
         ctx.setMode(m)
         console.log(`mode → ${m}`)
       } else {
-        console.log("usage: /mode council|dispatch|pipeline")
+        console.log("usage: /mode council|dispatch|pipeline|debate")
       }
       break
     }
@@ -234,7 +272,7 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
       break
     case "help":
       console.log([
-        "/mode council|dispatch|pipeline  — switch execution mode",
+        "/mode council|dispatch|pipeline|debate  — switch execution mode",
         "/router <name>                   — switch router agent",
         "/agents                          — list available agents",
         "/models                          — list cached models per agent",

@@ -123,7 +123,10 @@ export class CouncilRunner {
   async debate(
     prompt: string,
     context: Message[],
-    options: { maxRounds?: number } = {},
+    options: {
+      maxRounds?: number
+      onRoundComplete?: (roundNum: number, responses: DebateRound) => Promise<boolean | undefined>
+    } = {},
   ): Promise<DebateResult> {
     const maxRounds = options.maxRounds ?? 5
     const rounds: DebateRound[] = []
@@ -146,6 +149,17 @@ export class CouncilRunner {
     )
     rounds.push(round1)
 
+    if (options.onRoundComplete) {
+      const cont = await options.onRoundComplete(1, round1)
+      if (cont === false) {
+        const synthesis = await this.router.query(
+          `Debate topic: "${prompt}"\n\nFull debate:\n${history()}\n\nSynthesize the best conclusion.`,
+          [],
+        )
+        return { rounds, synthesis: synthesis.content, consensusReached: false, roundCount: rounds.length }
+      }
+    }
+
     // Rounds 2+
     for (let round = 2; round <= maxRounds; round++) {
       const debateHistory = history()
@@ -167,8 +181,23 @@ export class CouncilRunner {
       )
       const nonPass = roundResponses.filter((r): r is { agent: string; content: string } => r !== null)
 
+      if (nonPass.length > 0) {
+        rounds.push(nonPass)
+      }
+
+      if (options.onRoundComplete) {
+        const cont = await options.onRoundComplete(round, nonPass)
+        if (cont === false) {
+          const synthesis = await this.router.query(
+            `Debate topic: "${prompt}"\n\nFull debate:\n${history()}\n\nSynthesize the best conclusion.`,
+            [],
+          )
+          return { rounds, synthesis: synthesis.content, consensusReached: false, roundCount: rounds.length }
+        }
+      }
+
       if (nonPass.length === 0) {
-        // All agents passed — consensus, don't push empty round
+        // All agents passed — consensus
         const synthesisPrompt = [
           `Debate topic: "${prompt}"`,
           `Full debate:\n${history()}`,
@@ -177,8 +206,6 @@ export class CouncilRunner {
         const synthesis = await this.router.query(synthesisPrompt, [])
         return { rounds, synthesis: synthesis.content, consensusReached: true, roundCount: round }
       }
-
-      rounds.push(nonPass)
     }
 
     // Max rounds reached

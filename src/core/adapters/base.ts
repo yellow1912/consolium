@@ -25,10 +25,13 @@ export abstract class SubprocessAdapter implements AgentAdapter {
     const start = Date.now()
     let { exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(fullPrompt, options))
 
+    // Heuristic: each CLI uses different wording ("unknown model", "invalid model id", etc.)
+    // The broad "model" substring catches all of them. False positives (e.g. rate-limit messages
+    // that mention "model") are acceptable — retrying with the default is safe.
     if (exitCode !== 0 && options?.model && stderr.toLowerCase().includes("model")) {
       // model not found — retry without model override
       console.warn(`[${this.name}] model '${options.model}' rejected, retrying with default`)
-      ;({ exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(fullPrompt)))
+      ;({ exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(fullPrompt))) // Retry without model option — let the CLI use its own default
     }
 
     if (exitCode !== 0) {

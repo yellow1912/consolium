@@ -77,4 +77,43 @@ describe("SubprocessAdapter fallback", () => {
     expect(result.content).toBe("ok response")
     expect(callCount).toBe(2)
   })
+
+  it("does not retry on non-model errors", async () => {
+    class TestAdapter extends SubprocessAdapter {
+      readonly name = "test"
+      readonly bin = "test-bin"
+      getModels = async () => []
+      buildArgs(prompt: string, options?: QueryOptions) {
+        return options?.model ? ["--model", options.model, prompt] : [prompt]
+      }
+    }
+    const adapter = new TestAdapter()
+    let callCount = 0
+    ;(adapter as any).spawnAndRead = async () => {
+      callCount++
+      return { exitCode: 1, stdout: "", stderr: "permission denied" }
+    }
+    await expect(adapter.query("hello", [], { model: "some-model" })).rejects.toThrow("permission denied")
+    expect(callCount).toBe(1)
+  })
+
+  it("throws retry error when fallback also fails", async () => {
+    class TestAdapter extends SubprocessAdapter {
+      readonly name = "test"
+      readonly bin = "test-bin"
+      getModels = async () => []
+      buildArgs(prompt: string, options?: QueryOptions) {
+        return options?.model ? ["--model", options.model, prompt] : [prompt]
+      }
+    }
+    const adapter = new TestAdapter()
+    let callCount = 0
+    ;(adapter as any).spawnAndRead = async () => {
+      callCount++
+      if (callCount === 1) return { exitCode: 1, stdout: "", stderr: "unknown model: bad-model" }
+      return { exitCode: 1, stdout: "", stderr: "default model also unavailable" }
+    }
+    await expect(adapter.query("hello", [], { model: "bad-model" })).rejects.toThrow("default model also unavailable")
+    expect(callCount).toBe(2)
+  })
 })

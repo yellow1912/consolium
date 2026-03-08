@@ -44,7 +44,7 @@ function getArgCompletions(
   registry: AdapterRegistry,
   modelCache: ModelCache,
 ): string[] {
-  const agentNames = registry.all().map((a: { name: string }) => a.name)
+  const agentNames = registry.all().map(a => a.name)
   const parts = args.split(" ")
 
   switch (cmd) {
@@ -58,11 +58,11 @@ function getArgCompletions(
       if (parts.length <= 1) return agentNames
       const agent = parts[0]
       const models = modelCache.get(agent)
-      return [...models, "clear"]
+      return [...models, "clear"].map(m => `${agent} ${m}`)
     }
     case "debate": {
       if (parts.length <= 1) return ["rounds", "autopilot"]
-      if (parts[0] === "autopilot") return ["on", "off"]
+      if (parts[0] === "autopilot") return ["on", "off"].map(v => `autopilot ${v}`)
       return []
     }
     default:

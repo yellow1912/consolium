@@ -22,6 +22,8 @@ export async function startCLI(options: {
   const modelOverrides = new Map<string, string>()
   let debateMaxRounds = 5
   let debateAutopilot = false
+  const setDebateAutopilot = (on: boolean) => { debateAutopilot = on }
+  const setDebateMaxRounds = (n: number) => { debateMaxRounds = n }
 
   let session = options.resumeId
     ? (sessionMgr.get(options.resumeId) ?? sessionMgr.create({ mode, router: routerName }))
@@ -100,10 +102,8 @@ export async function startCLI(options: {
           setMode: (m: Mode) => { mode = m },
           setRouter: (r: string) => { routerName = r },
           rebuildRunner: () => { runner = buildRunner() },
-          debateMaxRounds,
-          debateAutopilot,
-          setDebateMaxRounds: (n: number) => { debateMaxRounds = n },
-          setDebateAutopilot: (on: boolean) => { debateAutopilot = on },
+          setDebateMaxRounds,
+          setDebateAutopilot,
         })
         return rl.closed || prompt()
       }
@@ -154,7 +154,7 @@ export async function startCLI(options: {
                   rl.removeListener("close", onClose)
                   const t = input.trim()
                   if (t === "/done") return resolve(false)
-                  if (t === "/debate autopilot on") { debateAutopilot = true; return resolve(undefined) }
+                  if (t === "/debate autopilot on") { setDebateAutopilot(true); return resolve(undefined) }
                   if (t) {
                     context.push({ role: "user", agent: null, content: t })
                     sessionMgr.addMessage(session.id, "user", null, t)
@@ -196,8 +196,6 @@ type SlashCtx = {
   setMode: (m: Mode) => void
   setRouter: (r: string) => void
   rebuildRunner: () => void
-  debateMaxRounds: number
-  debateAutopilot: boolean
   setDebateMaxRounds: (n: number) => void
   setDebateAutopilot: (on: boolean) => void
 }
@@ -298,8 +296,8 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
     case "debate": {
       const [sub, val] = slash.args
       if (sub === "rounds") {
-        const n = parseInt(val, 10)
-        if (!n || n < 1) { console.log("usage: /debate rounds <number>"); break }
+        const n = val ? parseInt(val, 10) : NaN
+        if (!Number.isInteger(n) || n < 1) { console.log("usage: /debate rounds <number>"); break }
         ctx.setDebateMaxRounds(n)
         console.log(`debate max rounds → ${n}`)
       } else if (sub === "autopilot") {

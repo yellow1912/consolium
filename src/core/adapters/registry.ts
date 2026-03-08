@@ -1,4 +1,7 @@
 import type { AgentAdapter } from "./types"
+import { ClaudeAdapter } from "./claude"
+import { CodexAdapter } from "./codex"
+import { GeminiAdapter } from "./gemini"
 
 export class AdapterRegistry {
   private adapters = new Map<string, AgentAdapter>()
@@ -23,9 +26,6 @@ export class AdapterRegistry {
 
 export function buildDefaultRegistry(): AdapterRegistry {
   const registry = new AdapterRegistry()
-  const { ClaudeAdapter } = require("./claude")
-  const { CodexAdapter } = require("./codex")
-  const { GeminiAdapter } = require("./gemini")
   registry.register(new ClaudeAdapter())
   registry.register(new CodexAdapter())
   registry.register(new GeminiAdapter())

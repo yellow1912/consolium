@@ -7,6 +7,7 @@ import { parseSlash } from "./slash"
 import { classifyIntent } from "./intent"
 import type { Message } from "../core/adapters/types"
 import { ModelCache } from "../core/models/cache"
+import { pick } from "./picker"
 
 type Mode = "council" | "dispatch" | "pipeline" | "debate"
 
@@ -39,7 +40,19 @@ export async function startCLI(options: {
   const registry = options.personas ? buildPersonaRegistry() : buildDefaultRegistry()
 
   // When resuming, restore saved mode/router unless explicitly overridden
-  const resumed = options.resumeId ? sessionMgr.get(options.resumeId) : null
+  let resumed: ReturnType<SessionManager["get"]> = null
+  if (options.resumeId) {
+    try {
+      resumed = sessionMgr.get(options.resumeId)
+    } catch (err) {
+      console.error(`[error] ${err instanceof Error ? err.message : err}`)
+      process.exit(1)
+    }
+    if (!resumed) {
+      console.error(`[error] No session found matching '${options.resumeId}'. Use --list to see available sessions.`)
+      process.exit(1)
+    }
+  }
   let mode: Mode = options.mode ?? (resumed?.mode as Mode | undefined) ?? "dispatch"
   let routerName = options.router ?? resumed?.router ?? "claude"
   const modelOverrides = new Map<string, string>()
@@ -50,7 +63,17 @@ export async function startCLI(options: {
 
   let session = resumed ?? sessionMgr.create({ mode, router: routerName })
 
-  const context: Message[] = sessionMgr.getMessages(session.id)
+  let context: Message[] = sessionMgr.getMessages(session.id)
+
+  function switchToSession(s: NonNullable<ReturnType<SessionManager["get"]>>) {
+    session = s
+    mode = s.mode as Mode
+    routerName = s.router
+    context = sessionMgr.getMessages(s.id)
+    runner = buildRunner()
+    console.log(`\nconsilium — session ${s.id} (resumed)`)
+    console.log(`mode: ${mode}  router: ${routerName}\n`)
+  }
 
   const modelCache = new ModelCache()
   await modelCache.load()
@@ -131,6 +154,7 @@ export async function startCLI(options: {
           rebuildRunner: () => { runner = buildRunner() },
           setDebateMaxRounds,
           setDebateAutopilot,
+          switchToSession,
         })
         return rl.closed || prompt()
       }
@@ -264,6 +288,7 @@ type SlashCtx = {
   rebuildRunner: () => void
   setDebateMaxRounds: (n: number) => void
   setDebateAutopilot: (on: boolean) => void
+  switchToSession: (s: NonNullable<ReturnType<SessionManager["get"]>>) => void
 }
 
 async function handleSlash(slash: { command: string; args: string[] }, ctx: SlashCtx) {
@@ -334,11 +359,51 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
       }
       break
     }
-    case "sessions":
-      ctx.sessionMgr.listAll().forEach(s =>
-        console.log(`  ${s.id}  [${s.mode}] [${s.status}]  router:${s.router}`)
+    case "sessions": {
+      const allSessions = ctx.sessionMgr.listAll()
+      if (allSessions.length === 0) { console.log("(no sessions)"); break }
+      const selected = await pick(
+        allSessions.map(s => ({
+          label: `${s.id.slice(0, 8)}  [${s.mode}]  router:${s.router}`,
+          value: s.id,
+          hint: s.status,
+        })),
+        "Select a session to resume (esc to cancel)"
       )
+      if (selected) {
+        const s = ctx.sessionMgr.get(selected)
+        if (s) ctx.switchToSession(s)
+      }
       break
+    }
+    case "resume": {
+      const id = slash.args[0]
+      if (id) {
+        try {
+          const s = ctx.sessionMgr.get(id)
+          if (s) { ctx.switchToSession(s) }
+          else { console.log(`No session found matching '${id}'. Use /sessions to browse.`) }
+        } catch (err) {
+          console.log(err instanceof Error ? err.message : String(err))
+        }
+      } else {
+        const allSessions = ctx.sessionMgr.listAll()
+        if (allSessions.length === 0) { console.log("(no sessions)"); break }
+        const selected = await pick(
+          allSessions.map(s => ({
+            label: `${s.id.slice(0, 8)}  [${s.mode}]  router:${s.router}`,
+            value: s.id,
+            hint: s.status,
+          })),
+          "Select a session to resume (esc to cancel)"
+        )
+        if (selected) {
+          const s = ctx.sessionMgr.get(selected)
+          if (s) ctx.switchToSession(s)
+        }
+      }
+      break
+    }
     case "history":
       if (ctx.context.length === 0) { console.log("(no history)"); break }
       ctx.context.forEach(m => console.log(`  [${m.agent ?? m.role}]: ${m.content}`))
@@ -354,7 +419,8 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
         "/models refresh                  — re-fetch models from all agents",
         "/model <agent> <model-id>        — override model for this session",
         "/model <agent> clear             — remove model override",
-        "/sessions                        — list all sessions",
+        "/sessions                        — browse and resume sessions",
+        "/resume [id]                     — resume a session (interactive picker if no id)",
         "/history                         — show session history",
         "/help                            — show this help",
         "/exit /quit                      — exit consilium",

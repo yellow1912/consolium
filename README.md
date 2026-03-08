@@ -12,7 +12,7 @@ Most tasks use a single AI agent. Consilium lets multiple agents work together:
 
 ## Installation
 
-**Prerequisites:** [Bun](https://bun.sh) installed, plus at least one of the supported agents configured (see [Agents](#agents)).
+**Prerequisites:** [Bun](https://bun.sh) installed, plus at least one supported agent CLI installed and authenticated (see [Agents](#agents)).
 
 ```bash
 git clone https://github.com/yellow1912/consolium.git
@@ -155,7 +155,8 @@ Type these directly in the chat prompt:
 | `/models refresh` | Re-fetch models from all agents |
 | `/model <agent> <model-id>` | Override model for a specific agent this session |
 | `/model <agent> clear` | Remove model override |
-| `/sessions` | List all past sessions |
+| `/sessions` | Browse sessions and resume (interactive picker) |
+| `/resume [id]` | Resume a session by ID or interactive picker |
 | `/history` | Show current session history |
 | `/debate rounds <n>` | Set max debate rounds (default: 5) |
 | `/debate autopilot on\|off` | Skip or re-enable human pause between debate rounds |
@@ -192,13 +193,15 @@ Then Claude Code can call Consilium tools: `start_session`, `send_message`, `get
 
 ## Agents
 
-| Agent | SDK / Method | Notes |
-|-------|-------------|-------|
-| claude | `@anthropic-ai/claude-agent-sdk` | Default router. Requires `ANTHROPIC_API_KEY`. |
-| codex | `@openai/codex-sdk` | Code-focused. Requires `OPENAI_API_KEY`. |
-| gemini | subprocess (`gemini` CLI) | Long-context tasks. Requires `gemini` CLI installed and authenticated. |
+All agents run via their CLI — no API keys required by Consilium. Each agent must be installed and authenticated independently.
 
-You need at least one agent available. Consilium skips agents that aren't configured.
+| Agent | CLI command | Install |
+|-------|-------------|---------|
+| claude | `claude` | [Claude Code](https://claude.ai/code) |
+| codex | `codex` | [OpenAI Codex CLI](https://github.com/openai/codex) |
+| gemini | `gemini` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) |
+
+You need at least one agent installed and authenticated. Consilium detects which CLIs are available and skips any that aren't found.
 
 ## Architecture
 

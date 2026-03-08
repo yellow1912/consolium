@@ -94,7 +94,15 @@ export class DbStore {
   }
 
   getSession(id: string) {
-    return this.db.select().from(sessions).where(eq(sessions.id, id)).get() ?? null
+    // Try exact match first
+    const exact = this.db.select().from(sessions).where(eq(sessions.id, id)).get()
+    if (exact) return exact
+    // Fall back to prefix match
+    const all = this.db.select().from(sessions).all()
+    const matches = all.filter(s => s.id.startsWith(id))
+    if (matches.length === 1) return matches[0]
+    if (matches.length > 1) throw new Error(`Ambiguous session ID prefix '${id}' — matches ${matches.length} sessions. Use a longer prefix.`)
+    return null
   }
 
   listSessions(status?: Status) {

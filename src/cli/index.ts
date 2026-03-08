@@ -89,7 +89,7 @@ export async function startCLI(options: {
   const prompt = () =>
     rl.question("you> ", async (input) => {
       const trimmed = input.trim()
-      if (!trimmed) return prompt()
+      if (!trimmed) return rl.closed || prompt()
 
       const slash = parseSlash(trimmed)
       if (slash) {
@@ -99,7 +99,7 @@ export async function startCLI(options: {
           setRouter: (r: string) => { routerName = r },
           rebuildRunner: () => { runner = buildRunner() },
         })
-        return prompt()
+        return rl.closed || prompt()
       }
 
       // Save user message
@@ -133,7 +133,7 @@ export async function startCLI(options: {
         console.error(`[error] ${err}`)
       }
 
-      prompt()
+      if (!rl.closed) prompt()
     })
 
   rl.on("close", () => clearInterval(refreshInterval))

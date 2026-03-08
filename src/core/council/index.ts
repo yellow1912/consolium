@@ -153,12 +153,12 @@ export class CouncilRunner {
         agents.map(async a => {
           const resp = await a.query(
             `Debate topic: "${prompt}"\n\nDebate so far:\n${debateHistory}\n\nDo you have anything to add or challenge? Respond with JSON only:\n{ "pass": true } if you have nothing new to add\n{ "pass": false, "content": "<your response>" } if you want to speak`,
-            [],
+            context,
           )
           try {
             const parsed = JSON.parse(resp.content)
             if (parsed.pass === true) return null
-            return { agent: a.name, content: parsed.content as string }
+            return { agent: a.name, content: (parsed.content as string) ?? "" }
           } catch {
             // agent didn't follow JSON format — treat as a response
             return { agent: a.name, content: resp.content }
@@ -166,17 +166,19 @@ export class CouncilRunner {
         })
       )
       const nonPass = roundResponses.filter((r): r is { agent: string; content: string } => r !== null)
-      rounds.push(nonPass)
 
       if (nonPass.length === 0) {
+        // All agents passed — consensus, don't push empty round
         const synthesisPrompt = [
           `Debate topic: "${prompt}"`,
           `Full debate:\n${history()}`,
           `Consensus was reached. Synthesize the final position.`,
         ].join("\n")
         const synthesis = await this.router.query(synthesisPrompt, [])
-        return { rounds, synthesis: synthesis.content, consensusReached: true, roundCount: round }
+        return { rounds, synthesis: synthesis.content, consensusReached: true, roundCount: rounds.length }
       }
+
+      rounds.push(nonPass)
     }
 
     // Max rounds reached
@@ -186,6 +188,6 @@ export class CouncilRunner {
       `The debate reached the maximum number of rounds (${maxRounds}). Synthesize the best conclusion from what was said.`,
     ].join("\n")
     const synthesis = await this.router.query(synthesisPrompt, [])
-    return { rounds, synthesis: synthesis.content, consensusReached: false, roundCount: maxRounds }
+    return { rounds, synthesis: synthesis.content, consensusReached: false, roundCount: rounds.length }
   }
 }

@@ -157,9 +157,9 @@ describe("debate mode", () => {
     const result = await runner.debate("topic", [], { maxRounds: 3 })
     // round 2: codex passes, gemini passes → all pass → stop
     expect(result.consensusReached).toBe(true)
-    expect(result.roundCount).toBe(2)
-    // round 2 has no non-pass responses
-    expect(result.rounds[1]).toHaveLength(0)
+    expect(result.roundCount).toBe(1)  // only round 1 was pushed; round 2 (all-pass) was not
+    // only round 1 was pushed; round 2 (all-pass) was not
+    expect(result.rounds).toHaveLength(1)
   })
 
   it("stops at maxRounds even if agents keep responding", async () => {

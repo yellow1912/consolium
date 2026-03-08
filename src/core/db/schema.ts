@@ -3,7 +3,7 @@ import { sqliteTable, text } from "drizzle-orm/sqlite-core"
 export const sessions = sqliteTable("sessions", {
   id: text("id").primaryKey(),
   name: text("name"),
-  mode: text("mode", { enum: ["council", "dispatch", "pipeline"] }).notNull(),
+  mode: text("mode", { enum: ["council", "dispatch", "pipeline", "debate"] }).notNull(),
   status: text("status", { enum: ["active", "closed"] }).notNull().default("active"),
   router: text("router").notNull(),
   createdAt: text("created_at").notNull(),
@@ -42,4 +42,12 @@ export const participants = sqliteTable("participants", {
   agent: text("agent").notNull(),
   joinedAt: text("joined_at").notNull(),
   lastSeen: text("last_seen").notNull(),
+})
+
+export const agentSessions = sqliteTable("agent_sessions", {
+  id: text("id").primaryKey(),
+  masterSessionId: text("master_session_id").notNull(),
+  agentName: text("agent_name").notNull(),
+  agentSessionId: text("agent_session_id").notNull(),
+  createdAt: text("created_at").notNull(),
 })

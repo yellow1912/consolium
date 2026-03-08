@@ -108,3 +108,31 @@ describe("DbStore", () => {
     expect(db.getParticipants(s.id).filter(p => p.agent === "codex")).toHaveLength(1)
   })
 })
+
+describe("agent_sessions", () => {
+  let db: DbStore
+  beforeEach(() => { db = new DbStore("/tmp/test-agent-sessions.db") })
+  afterEach(() => {
+    db.close()
+    try { require("node:fs").rmSync("/tmp/test-agent-sessions.db") } catch {}
+  })
+
+  it("stores and retrieves an agent session", () => {
+    db.setAgentSession("master-1", "claude", "claude-uuid")
+    expect(db.getAgentSession("master-1", "claude")).toBe("claude-uuid")
+  })
+  it("returns null for unknown agent session", () => {
+    expect(db.getAgentSession("master-1", "gemini")).toBeNull()
+  })
+  it("upserts on second call", () => {
+    db.setAgentSession("master-1", "claude", "old")
+    db.setAgentSession("master-1", "claude", "new")
+    expect(db.getAgentSession("master-1", "claude")).toBe("new")
+  })
+  it("isolates by master session id", () => {
+    db.setAgentSession("master-1", "claude", "a")
+    db.setAgentSession("master-2", "claude", "b")
+    expect(db.getAgentSession("master-1", "claude")).toBe("a")
+    expect(db.getAgentSession("master-2", "claude")).toBe("b")
+  })
+})

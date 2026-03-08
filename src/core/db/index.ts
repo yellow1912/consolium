@@ -3,7 +3,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite"
 import { eq } from "drizzle-orm"
 import type { InferSelectModel } from "drizzle-orm"
 import { randomUUID } from "node:crypto"
-import { sessions, messages, tasks, reviews, participants } from "./schema"
+import { sessions, messages, tasks, reviews, participants, agentSessions } from "./schema"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 
@@ -23,7 +23,7 @@ export class DbStore {
     mkdirSync(dirname(dbPath), { recursive: true })
     this.sqlite = new Database(dbPath)
     this.sqlite.exec("PRAGMA journal_mode=WAL;")
-    this.db = drizzle(this.sqlite, { schema: { sessions, messages, tasks, reviews, participants } })
+    this.db = drizzle(this.sqlite, { schema: { sessions, messages, tasks, reviews, participants, agentSessions } })
     this.migrate()
   }
 
@@ -46,6 +46,33 @@ export class DbStore {
     this.sqlite.exec(
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_session_agent ON participants(session_id, agent);"
     )
+    this.sqlite.exec(
+      "CREATE TABLE IF NOT EXISTS agent_sessions (id TEXT PRIMARY KEY, master_session_id TEXT NOT NULL, agent_name TEXT NOT NULL, agent_session_id TEXT NOT NULL, created_at TEXT NOT NULL);"
+    )
+    this.sqlite.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions ON agent_sessions(master_session_id, agent_name);"
+    )
+  }
+
+  getAgentSession(masterSessionId: string, agentName: string): string | null {
+    const row = this.db
+      .select()
+      .from(agentSessions)
+      .where(eq(agentSessions.masterSessionId, masterSessionId))
+      .all()
+      .find(r => r.agentName === agentName)
+    return row?.agentSessionId ?? null
+  }
+
+  setAgentSession(masterSessionId: string, agentName: string, agentSessionId: string): void {
+    this.db
+      .insert(agentSessions)
+      .values({ id: randomUUID(), masterSessionId, agentName, agentSessionId, createdAt: nowIso() })
+      .onConflictDoUpdate({
+        target: [agentSessions.masterSessionId, agentSessions.agentName],
+        set: { agentSessionId },
+      })
+      .run()
   }
 
   close() {

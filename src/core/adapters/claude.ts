@@ -1,4 +1,4 @@
-import type { AgentAdapter, AgentResponse, Message } from "./types"
+import type { AgentAdapter, AgentResponse, Message, ModelInfo, QueryOptions } from "./types"
 
 type ClaudeAdapterOptions = {
   name?: string
@@ -22,9 +22,18 @@ export class ClaudeAdapter implements AgentAdapter {
     return proc.exitCode === 0
   }
 
-  private async _query(prompt: string): Promise<string> {
+  async getModels(): Promise<ModelInfo[]> {
+    return [
+      { id: "claude-opus-4-6", name: "Claude Opus 4.6", capabilities: ["reasoning"] },
+      { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", capabilities: ["coding", "reasoning"], isDefault: true },
+      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", capabilities: ["fast", "general"] },
+    ]
+  }
+
+  private async _query(prompt: string, options?: QueryOptions): Promise<string> {
     const args = ["--print"]
-    if (this.model) args.push("--model", this.model)
+    const model = options?.model ?? this.model
+    if (model) args.push("--model", model)
     if (this.role) args.push("--system-prompt", this.role)
     args.push(prompt)
     const env = { ...process.env }
@@ -42,12 +51,12 @@ export class ClaudeAdapter implements AgentAdapter {
     return stdout.trim()
   }
 
-  async query(prompt: string, context: Message[]): Promise<AgentResponse> {
+  async query(prompt: string, context: Message[], options?: QueryOptions): Promise<AgentResponse> {
     const contextStr = context.length > 0
       ? context.map(m => `[${m.agent ?? m.role}]: ${m.content}`).join("\n") + `\n\n[user]: ${prompt}`
       : prompt
     const start = Date.now()
-    const content = await this._query(contextStr)
+    const content = await this._query(contextStr, options)
     return { agent: this.name, content, durationMs: Date.now() - start }
   }
 }

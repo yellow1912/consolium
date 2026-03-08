@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
-import type { AgentAdapter, AgentResponse, Message, ModelInfo, QueryOptions } from "./types"
+import type { AgentResponse, Message, ModelInfo, QueryOptions } from "./types"
+import { SubprocessAdapter } from "./base"
 
 type ClaudeAdapterOptions = {
   name?: string
@@ -7,20 +8,17 @@ type ClaudeAdapterOptions = {
   role?: string
 }
 
-export class ClaudeAdapter implements AgentAdapter {
+export class ClaudeAdapter extends SubprocessAdapter {
   readonly name: string
+  readonly bin = "claude"
   private model: string | null
   private role: string
 
   constructor({ name = "claude", model = null, role = "" }: ClaudeAdapterOptions = {}) {
+    super()
     this.name = name
     this.model = model
     this.role = role
-  }
-
-  async isAvailable(): Promise<boolean> {
-    const proc = Bun.spawnSync(["which", "claude"])
-    return proc.exitCode === 0
   }
 
   async getModels(): Promise<ModelInfo[]> {
@@ -31,51 +29,58 @@ export class ClaudeAdapter implements AgentAdapter {
     ]
   }
 
-  private async _query(prompt: string, options?: QueryOptions): Promise<{ content: string; sessionId: string }> {
+  buildArgs(prompt: string, options?: QueryOptions): string[] {
+    const args = ["--print"]
+    const model = options?.model ?? this.model
+    if (model) args.push("--model", model)
+    args.push(prompt)
+    return args
+  }
+
+  protected override async spawnAndRead(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    const env = { ...process.env }
+    delete env.CLAUDECODE
+    const proc = Bun.spawn([this.bin, ...args], { stdout: "pipe", stderr: "pipe", env })
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ])
+    return { exitCode, stdout, stderr }
+  }
+
+  override async query(prompt: string, context: Message[], options?: QueryOptions): Promise<AgentResponse> {
+    const isResume = !!options?.agentSessionId
     const sessionId = options?.agentSessionId ?? randomUUID()
 
-    const runWith = async (opts?: QueryOptions): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+    // When resuming a session, CouncilRunner has already built the delta — pass as-is.
+    // Otherwise flatten context for backward compatibility.
+    const effectivePrompt = isResume || context.length === 0
+      ? prompt
+      : this.buildContextPrompt(prompt, context)
+
+    const sessionArgs = isResume
+      ? ["--resume", sessionId]
+      : ["--session-id", sessionId, ...(options?.systemPrompt ?? this.role ? ["--system-prompt", options?.systemPrompt ?? this.role] : [])]
+
+    const buildArgsWithSession = (opts?: QueryOptions): string[] => {
       const args = ["--print"]
       const model = opts?.model ?? this.model
       if (model) args.push("--model", model)
-
-      if (opts?.agentSessionId) {
-        args.push("--resume", opts.agentSessionId)
-      } else {
-        args.push("--session-id", sessionId)
-        const sysPrompt = opts?.systemPrompt ?? this.role
-        if (sysPrompt) args.push("--system-prompt", sysPrompt)
-      }
-
-      args.push(prompt)
-      const env = { ...process.env }
-      delete env.CLAUDECODE
-      const proc = Bun.spawn(["claude", ...args], { stdout: "pipe", stderr: "pipe", env })
-      const [exitCode, stdout, stderr] = await Promise.all([
-        proc.exited,
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-      ])
-      return { exitCode, stdout, stderr }
+      args.push(...sessionArgs)
+      args.push(effectivePrompt)
+      return args
     }
 
-    let { exitCode, stdout, stderr } = await runWith(options)
+    const start = Date.now()
+    let { exitCode, stdout, stderr } = await this.spawnAndRead(buildArgsWithSession(options))
+
     if (exitCode !== 0 && options?.model && stderr.toLowerCase().includes("model")) {
       console.warn(`[claude] model '${options.model}' rejected, retrying with default`)
-      ;({ exitCode, stdout, stderr } = await runWith({ ...options, model: undefined }))
+      ;({ exitCode, stdout, stderr } = await this.spawnAndRead(buildArgsWithSession({ ...options, model: undefined })))
     }
-    if (exitCode !== 0) throw new Error(`claude exited with code ${exitCode}: ${stderr}`)
-    return { content: stdout.trim(), sessionId }
-  }
 
-  async query(prompt: string, context: Message[], options?: QueryOptions): Promise<AgentResponse> {
-    // When resuming a session, CouncilRunner has already built the delta — pass as-is.
-    // Otherwise flatten context for backward compatibility.
-    const effectivePrompt = options?.agentSessionId || context.length === 0
-      ? prompt
-      : context.map(m => `[${m.agent ?? m.role}]: ${m.content}`).join("\n") + `\n\n[user]: ${prompt}`
-    const start = Date.now()
-    const { content, sessionId } = await this._query(effectivePrompt, options)
-    return { agent: this.name, content, durationMs: Date.now() - start, sessionId }
+    if (exitCode !== 0) throw new Error(`claude exited with code ${exitCode}: ${stderr}`)
+    return { agent: this.name, content: stdout.trim(), durationMs: Date.now() - start, sessionId }
   }
 }

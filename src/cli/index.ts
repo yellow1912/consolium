@@ -38,17 +38,17 @@ export async function startCLI(options: {
   const sessionMgr = new SessionManager()
   const registry = options.personas ? buildPersonaRegistry() : buildDefaultRegistry()
 
-  let mode: Mode = options.mode ?? "dispatch"
-  let routerName = options.router ?? "claude"
+  // When resuming, restore saved mode/router unless explicitly overridden
+  const resumed = options.resumeId ? sessionMgr.get(options.resumeId) : null
+  let mode: Mode = options.mode ?? (resumed?.mode as Mode | undefined) ?? "dispatch"
+  let routerName = options.router ?? resumed?.router ?? "claude"
   const modelOverrides = new Map<string, string>()
   let debateMaxRounds = 5
   let debateAutopilot = false
   const setDebateAutopilot = (on: boolean) => { debateAutopilot = on }
   const setDebateMaxRounds = (n: number) => { debateMaxRounds = n }
 
-  let session = options.resumeId
-    ? (sessionMgr.get(options.resumeId) ?? sessionMgr.create({ mode, router: routerName }))
-    : sessionMgr.create({ mode, router: routerName })
+  let session = resumed ?? sessionMgr.create({ mode, router: routerName })
 
   const context: Message[] = sessionMgr.getMessages(session.id)
 
@@ -112,9 +112,10 @@ export async function startCLI(options: {
     completer,
   })
 
-  console.log(`\nconsilium — session ${session.id}`)
+  const resumedTag = resumed ? " (resumed)" : ""
+  console.log(`\nconsilium — session ${session.id}${resumedTag}`)
   console.log(`mode: ${mode}  router: ${routerName}`)
-  console.log('Type a message or /help for commands.\n')
+  console.log('Type a message or /help for commands. Use /sessions to list all sessions.\n')
 
   const prompt = () =>
     rl.question("you> ", async (input) => {
@@ -335,7 +336,7 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
     }
     case "sessions":
       ctx.sessionMgr.listAll().forEach(s =>
-        console.log(`  ${s.id.slice(0, 8)} [${s.mode}] [${s.status}] router:${s.router}`)
+        console.log(`  ${s.id}  [${s.mode}] [${s.status}]  router:${s.router}`)
       )
       break
     case "history":

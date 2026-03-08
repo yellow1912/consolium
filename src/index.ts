@@ -8,6 +8,7 @@ const { values } = parseArgs({
     router: { type: "string" },
     resume: { type: "string" },
     mcp: { type: "boolean", default: false },
+    personas: { type: "boolean", default: false },
     version: { type: "boolean", short: "v", default: false },
   },
   allowPositionals: true,
@@ -27,5 +28,6 @@ if (values.mcp) {
     mode: values.mode as "council" | "dispatch" | "pipeline" | undefined,
     router: values.router,
     resumeId: values.resume,
+    personas: values.personas,
   })
 }

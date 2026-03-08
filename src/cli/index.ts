@@ -1,7 +1,7 @@
 import * as readline from "node:readline"
 import { SessionManager } from "../core/session/index"
 import { CouncilRunner } from "../core/council/index"
-import { buildDefaultRegistry, type AdapterRegistry } from "../core/adapters/registry"
+import { buildDefaultRegistry, buildPersonaRegistry, type AdapterRegistry } from "../core/adapters/registry"
 import { parseSlash } from "./slash"
 import type { Message } from "../core/adapters/types"
 
@@ -11,9 +11,10 @@ export async function startCLI(options: {
   mode?: Mode
   router?: string
   resumeId?: string
+  personas?: boolean
 }) {
   const sessionMgr = new SessionManager()
-  const registry = buildDefaultRegistry()
+  const registry = options.personas ? buildPersonaRegistry() : buildDefaultRegistry()
 
   let mode: Mode = options.mode ?? "dispatch"
   let routerName = options.router ?? "claude"

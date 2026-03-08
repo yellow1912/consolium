@@ -31,3 +31,21 @@ export function buildDefaultRegistry(): AdapterRegistry {
   registry.register(new GeminiAdapter())
   return registry
 }
+
+export function buildPersonaRegistry(): AdapterRegistry {
+  const registry = new AdapterRegistry()
+  registry.register(new ClaudeAdapter()) // plain claude — used as router/synthesizer
+  registry.register(new ClaudeAdapter({
+    name: "claude-gp",
+    role: "a General Practitioner with 20 years of experience in family medicine. Provide practical, patient-focused insights.",
+  }))
+  registry.register(new ClaudeAdapter({
+    name: "claude-cardiologist",
+    role: "a Cardiologist specializing in cardiovascular diseases and their relationship to systemic conditions. Focus on heart and vascular health implications.",
+  }))
+  registry.register(new ClaudeAdapter({
+    name: "claude-nutritionist",
+    role: "a Clinical Nutritionist specializing in lifestyle medicine and disease prevention through diet and exercise. Focus on modifiable risk factors.",
+  }))
+  return registry
+}

@@ -1,11 +1,20 @@
 import type { AgentAdapter, AgentResponse, Message } from "./types"
 
-export class ClaudeAdapter implements AgentAdapter {
-  readonly name = "claude"
-  private model: string
+type ClaudeAdapterOptions = {
+  name?: string
+  model?: string
+  role?: string
+}
 
-  constructor(model = "claude-sonnet-4-6") {
+export class ClaudeAdapter implements AgentAdapter {
+  readonly name: string
+  private model: string
+  private role: string
+
+  constructor({ name = "claude", model = "claude-sonnet-4-6", role = "" }: ClaudeAdapterOptions = {}) {
+    this.name = name
     this.model = model
+    this.role = role
   }
 
   async isAvailable(): Promise<boolean> {
@@ -27,11 +36,12 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   async query(prompt: string, context: Message[]): Promise<AgentResponse> {
-    const fullPrompt = context.length > 0
+    const rolePrefix = this.role ? `You are ${this.role}.\n\n` : ""
+    const contextStr = context.length > 0
       ? context.map(m => `[${m.agent ?? m.role}]: ${m.content}`).join("\n") + `\n\n[user]: ${prompt}`
       : prompt
     const start = Date.now()
-    const content = await this._query(fullPrompt)
+    const content = await this._query(rolePrefix + contextStr)
     return { agent: this.name, content, durationMs: Date.now() - start }
   }
 }

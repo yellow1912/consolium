@@ -21,17 +21,23 @@ describe("buildCompleter — command names", () => {
     expect(hits).toContain("/mode")
     expect(hits).toContain("/router")
     expect(hits).toContain("/help")
+    expect(hits).toContain("/model")
+    expect(hits).toContain("/models")
   })
 
   it("returns all commands for bare /", () => {
     const [hits] = completer("/")
     expect(hits).toContain("/mode")
     expect(hits).toContain("/debate")
+    expect(hits).toContain("/model")
+    expect(hits).toContain("/models")
   })
 
   it("completes partial command", () => {
     const [hits] = completer("/mo")
-    expect(hits).toEqual(["/mode "])
+    expect(hits).toContain("/mode ")
+    expect(hits).toContain("/model ")
+    expect(hits).toContain("/models ")
   })
 
   it("completes /de to /debate", () => {

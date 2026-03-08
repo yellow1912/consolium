@@ -2,7 +2,7 @@ import type { AdapterRegistry } from "../core/adapters/registry"
 import type { ModelCache } from "../core/models/cache"
 
 const COMMANDS = [
-  "mode", "router", "agents", "sessions", "history", "help", "debate",
+  "mode", "router", "agents", "models", "model", "sessions", "history", "help", "debate",
 ]
 
 export function buildCompleter(registry: AdapterRegistry, modelCache: ModelCache) {

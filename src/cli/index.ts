@@ -191,7 +191,9 @@ async function handleSlash(slash: { command: string; args: string[] }, ctx: Slas
           const age = fetchedAt
             ? `${Math.round((Date.now() - fetchedAt.getTime()) / 3600000)}h ago`
             : "no cache"
-          console.log(`  ${a.name} (${age}): ${models.length > 0 ? models.join(", ") : "(none cached)"}`)
+          const override = ctx.modelOverrides.get(a.name)
+          const overrideStr = override ? ` [override: ${override}]` : ""
+          console.log(`  ${a.name} (${age})${overrideStr}: ${models.length > 0 ? models.join(", ") : "(none cached)"}`)
         })
       }
       break

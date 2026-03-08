@@ -24,4 +24,14 @@ describe("parseSlash", () => {
   it("handles extra whitespace", () => {
     expect(parseSlash("  /mode  council  ")).toEqual({ command: "mode", args: ["council"] })
   })
+
+  it("parses /models command", () => {
+    expect(parseSlash("/models")).toEqual({ command: "models", args: [] })
+    expect(parseSlash("/models refresh")).toEqual({ command: "models", args: ["refresh"] })
+  })
+
+  it("parses /model command", () => {
+    expect(parseSlash("/model claude claude-opus-4-6")).toEqual({ command: "model", args: ["claude", "claude-opus-4-6"] })
+    expect(parseSlash("/model claude clear")).toEqual({ command: "model", args: ["claude", "clear"] })
+  })
 })

@@ -49,21 +49,21 @@ describe("SessionManager", () => {
 
   it("closes a session", () => {
     const s = mgr.create({ mode: "pipeline" })
-    mgr.close_session(s.id)
+    mgr.closeSession(s.id)
     expect(mgr.get(s.id)?.status).toBe("closed")
   })
 
   it("lists only active sessions", () => {
     mgr.create({ mode: "council" })
     const s2 = mgr.create({ mode: "dispatch" })
-    mgr.close_session(s2.id)
+    mgr.closeSession(s2.id)
     expect(mgr.listActive()).toHaveLength(1)
   })
 
   it("lists all sessions", () => {
     mgr.create({ mode: "council" })
     const s2 = mgr.create({ mode: "dispatch" })
-    mgr.close_session(s2.id)
+    mgr.closeSession(s2.id)
     expect(mgr.listAll()).toHaveLength(2)
   })
 

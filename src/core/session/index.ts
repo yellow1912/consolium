@@ -16,7 +16,7 @@ export class SessionManager {
 
   get(id: string) { return this.db.getSession(id) }
 
-  close_session(id: string) { this.db.closeSession(id) }
+  closeSession(id: string) { this.db.closeSession(id) }
 
   listActive() { return this.db.listSessions("active") }
 

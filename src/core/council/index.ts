@@ -83,8 +83,8 @@ export class CouncilRunner {
         const parsed = JSON.parse(r.content)
         return {
           reviewer: a.name,
-          verdict: parsed.verdict as string ?? "approved",
-          content: parsed.content as string ?? r.content,
+          verdict: (parsed.verdict ?? "approved") as string,
+          content: (parsed.content ?? r.content) as string,
         }
       } catch {
         return { reviewer: a.name, verdict: "approved", content: r.content }

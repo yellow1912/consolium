@@ -48,6 +48,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
   const [routerName, setRouterName] = useState(initialRouter)
   const [sessionId, setSessionId] = useState("")
   const [context, setContext] = useState<Message[]>([])
+  const contextRef = useRef<Message[]>(context)
   const [isLoading, setIsLoading] = useState(false)
   const [loadingText, setLoadingText] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -57,7 +58,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
   const [debateMaxRounds, setDebateMaxRounds] = useState(5)
   const [resumed, setResumed] = useState(false)
   const [inputValue, setInputValue] = useState("")
-  const messageQueue = useRef<string[]>([])
+  type QueueEntry = string | { text: string; skipClassification: boolean }
+  const messageQueue = useRef<QueueEntry[]>([])
   const isProcessing = useRef(false)
 
   // --- Initialize session ---
@@ -97,7 +99,9 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setSessionId(sess.id)
     setMode(sess.mode as Mode)
     setRouterName(sess.router)
-    setContext(sessionMgr.current.getMessages(sess.id))
+    const msgs = sessionMgr.current.getMessages(sess.id)
+    setContext(msgs)
+    contextRef.current = msgs
     setResumed(true)
     setError(null)
   }, [])
@@ -105,7 +109,11 @@ export default function App({ initialMode = "council", initialRouter = "claude",
   // --- Add a message to context + persist ---
   const addMessage = useCallback((role: Message["role"], agent: string | null, content: string) => {
     const msg: Message = { role, agent, content }
-    setContext(prev => [...prev, msg])
+    setContext(prev => {
+      const next = [...prev, msg]
+      contextRef.current = next
+      return next
+    })
     if (sessionId) {
       sessionMgr.current.addMessage(sessionId, role, agent, content)
     }
@@ -119,7 +127,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setError(null)
     try {
       addMessage("user", null, prompt)
-      const result = await runner.dispatch(prompt, context, {
+      const result = await runner.dispatch(prompt, contextRef.current, {
         onRouted: (agent) => setLoadingText(`${agent} is thinking...`),
       })
       addMessage("agent", result.agent, result.content)
@@ -129,7 +137,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       setIsLoading(false)
       setLoadingText("")
     }
-  }, [runner, context, addMessage])
+  }, [runner, addMessage])
 
   const executeCouncil = useCallback(async (prompt: string) => {
     if (!runner) return
@@ -138,7 +146,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setError(null)
     try {
       addMessage("user", null, prompt)
-      const result = await runner.council(prompt, context)
+      const result = await runner.council(prompt, contextRef.current)
       for (const resp of result.responses) {
         addMessage("agent", resp.agent, resp.content)
       }
@@ -149,7 +157,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       setIsLoading(false)
       setLoadingText("")
     }
-  }, [runner, context, addMessage])
+  }, [runner, addMessage])
 
   const executePipeline = useCallback(async (prompt: string) => {
     if (!runner) return
@@ -158,7 +166,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setError(null)
     try {
       addMessage("user", null, prompt)
-      const result = await runner.pipeline(prompt, context, {
+      const result = await runner.pipeline(prompt, contextRef.current, {
         onRouted: (executor) => setLoadingText(`${executor} is working...`),
         onReviewing: (reviewers) => setLoadingText(`Reviewing: ${reviewers.join(", ")}...`),
       })
@@ -175,7 +183,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       setIsLoading(false)
       setLoadingText("")
     }
-  }, [runner, context, addMessage])
+  }, [runner, addMessage])
 
   const executeDebate = useCallback(async (prompt: string) => {
     if (!runner) return
@@ -184,7 +192,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setError(null)
     try {
       addMessage("user", null, prompt)
-      const result = await runner.debate(prompt, context, {
+      const result = await runner.debate(prompt, contextRef.current, {
         maxRounds: debateMaxRounds,
         onRoundComplete: async (roundNum, responses) => {
           setLoadingText(`Debate round ${roundNum} complete...`)
@@ -205,7 +213,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       setIsLoading(false)
       setLoadingText("")
     }
-  }, [runner, context, addMessage, debateMaxRounds])
+  }, [runner, addMessage, debateMaxRounds])
 
   const executePrompt = useCallback(async (prompt: string) => {
     switch (mode) {
@@ -359,7 +367,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       }
 
       case "history": {
-        const msgs = context
+        const msgs = contextRef.current
         if (msgs.length === 0) {
           addMessage("system", null, "No messages in this session.")
         } else {
@@ -418,7 +426,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       default:
         setError(`Unknown command: /${command}`)
     }
-  }, [addMessage, context, exit, modelOverrides, routerName, switchToSession])
+  }, [addMessage, exit, modelOverrides, routerName, switchToSession])
 
   // --- Process queue one message at a time ---
   const processQueue = useCallback(async () => {
@@ -426,7 +434,9 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     isProcessing.current = true
 
     while (messageQueue.current.length > 0) {
-      const trimmed = messageQueue.current.shift()!
+      const entry = messageQueue.current.shift()!
+      const trimmed = typeof entry === "string" ? entry : entry.text
+      const skipClassification = typeof entry !== "string" && entry.skipClassification
 
       // 1. Try slash command
       const slash = parseSlash(trimmed)
@@ -435,26 +445,29 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         continue
       }
 
-      // 2. Try NLP intent classification (only if router is available)
-      const registry = registryRef.current
-      const classifier = registry.get(routerName)
-      if (classifier) {
-        setIsLoading(true)
-        setLoadingText("Thinking...")
-        try {
-          const intent = await classifyIntent(trimmed, classifier, registry)
-          setIsLoading(false)
-          setLoadingText("")
-          if (intent.type === "command") {
-            await handleSlashCommand(intent.command, intent.args ?? [])
-            if (intent.followup) {
-              messageQueue.current.unshift(intent.followup)
+      // 2. Try NLP intent classification (skip for followup messages to prevent loops)
+      if (!skipClassification) {
+        const registry = registryRef.current
+        const classifier = registry.get(routerName)
+        if (classifier) {
+          setIsLoading(true)
+          setLoadingText("Thinking...")
+          try {
+            const intent = await classifyIntent(trimmed, classifier, registry)
+            setIsLoading(false)
+            setLoadingText("")
+            if (intent.type === "command") {
+              await handleSlashCommand(intent.command, intent.args ?? [])
+              // Followup goes directly to execution — never back through classification
+              if (intent.followup) {
+                messageQueue.current.unshift({ text: intent.followup, skipClassification: true })
+              }
+              continue
             }
-            continue
+          } catch {
+            setIsLoading(false)
+            setLoadingText("")
           }
-        } catch {
-          setIsLoading(false)
-          setLoadingText("")
         }
       }
 
@@ -472,7 +485,9 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setInputValue("")
     // Skip if this exact message is already queued (prevents spam from impatient re-submissions)
     const queue = messageQueue.current
-    if (queue.length > 0 && queue[queue.length - 1] === trimmed) return
+    const lastEntry = queue.length > 0 ? queue[queue.length - 1] : null
+    const lastText = lastEntry ? (typeof lastEntry === "string" ? lastEntry : lastEntry.text) : null
+    if (lastText === trimmed) return
     queue.push(trimmed)
     processQueue()
   }, [processQueue])

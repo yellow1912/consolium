@@ -75,7 +75,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     const registry = registryRef.current
     const router = registry.get(routerName)
     if (!router || !sessionId) return null
-    const adapters = registry.all()
+    const adapters = registry.all().filter(a => a.name !== routerName)
     return new CouncilRunner({
       router,
       adapters,

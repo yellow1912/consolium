@@ -470,7 +470,10 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     const trimmed = value.trim()
     if (!trimmed) return
     setInputValue("")
-    messageQueue.current.push(trimmed)
+    // Skip if this exact message is already queued (prevents spam from impatient re-submissions)
+    const queue = messageQueue.current
+    if (queue.length > 0 && queue[queue.length - 1] === trimmed) return
+    queue.push(trimmed)
     processQueue()
   }, [processQueue])
 

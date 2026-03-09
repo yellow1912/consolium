@@ -436,14 +436,20 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     const registry = registryRef.current
     const classifier = registry.get(routerName)
     if (classifier) {
+      setIsLoading(true)
+      setLoadingText("Thinking...")
       try {
         const intent = await classifyIntent(trimmed, classifier, registry)
+        setIsLoading(false)
+        setLoadingText("")
         if (intent.type === "command") {
           await handleSlashCommand(intent.command, intent.args ?? [])
           return
         }
       } catch {
         // classification failed — treat as message
+        setIsLoading(false)
+        setLoadingText("")
       }
     }
 

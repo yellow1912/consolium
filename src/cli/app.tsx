@@ -57,6 +57,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
   const [debateMaxRounds, setDebateMaxRounds] = useState(5)
   const [resumed, setResumed] = useState(false)
   const [inputValue, setInputValue] = useState("")
+  const messageQueue = useRef<string[]>([])
+  const isProcessing = useRef(false)
 
   // --- Initialize session ---
   useEffect(() => {
@@ -418,44 +420,59 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     }
   }, [addMessage, context, exit, modelOverrides, routerName, switchToSession])
 
-  // --- Input submission ---
-  const handleSubmit = useCallback(async (value: string) => {
-    const trimmed = value.trim()
-    if (!trimmed || isLoading) return
+  // --- Process queue one message at a time ---
+  const processQueue = useCallback(async () => {
+    if (isProcessing.current) return
+    isProcessing.current = true
 
-    setInputValue("")
+    while (messageQueue.current.length > 0) {
+      const trimmed = messageQueue.current.shift()!
 
-    // 1. Try slash command
-    const slash = parseSlash(trimmed)
-    if (slash) {
-      await handleSlashCommand(slash.command, slash.args)
-      return
-    }
-
-    // 2. Try NLP intent classification (only if router is available)
-    const registry = registryRef.current
-    const classifier = registry.get(routerName)
-    if (classifier) {
-      setIsLoading(true)
-      setLoadingText("Thinking...")
-      try {
-        const intent = await classifyIntent(trimmed, classifier, registry)
-        setIsLoading(false)
-        setLoadingText("")
-        if (intent.type === "command") {
-          await handleSlashCommand(intent.command, intent.args ?? [])
-          return
-        }
-      } catch {
-        // classification failed — treat as message
-        setIsLoading(false)
-        setLoadingText("")
+      // 1. Try slash command
+      const slash = parseSlash(trimmed)
+      if (slash) {
+        await handleSlashCommand(slash.command, slash.args)
+        continue
       }
+
+      // 2. Try NLP intent classification (only if router is available)
+      const registry = registryRef.current
+      const classifier = registry.get(routerName)
+      if (classifier) {
+        setIsLoading(true)
+        setLoadingText("Thinking...")
+        try {
+          const intent = await classifyIntent(trimmed, classifier, registry)
+          setIsLoading(false)
+          setLoadingText("")
+          if (intent.type === "command") {
+            await handleSlashCommand(intent.command, intent.args ?? [])
+            if (intent.followup) {
+              messageQueue.current.unshift(intent.followup)
+            }
+            continue
+          }
+        } catch {
+          setIsLoading(false)
+          setLoadingText("")
+        }
+      }
+
+      // 3. Execute as message in current mode
+      await executePrompt(trimmed)
     }
 
-    // 3. Execute as message in current mode
-    await executePrompt(trimmed)
-  }, [isLoading, handleSlashCommand, routerName, executePrompt])
+    isProcessing.current = false
+  }, [handleSlashCommand, routerName, executePrompt])
+
+  // --- Input submission --- queues message and kicks off processing
+  const handleSubmit = useCallback((value: string) => {
+    const trimmed = value.trim()
+    if (!trimmed) return
+    setInputValue("")
+    messageQueue.current.push(trimmed)
+    processQueue()
+  }, [processQueue])
 
   // --- Session picker handlers ---
   const handlePickerSelect = useCallback((id: string) => {
@@ -496,17 +513,15 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         </Box>
       )}
 
-      {!isLoading && (
-        <Box>
-          <Text bold color="green">&gt; </Text>
-          <TextInput
-            placeholder="Type a message or /help..."
-            suggestions={SLASH_SUGGESTIONS}
-            onSubmit={handleSubmit}
-            onChange={setInputValue}
-          />
-        </Box>
-      )}
+      <Box>
+        <Text bold color="green">&gt; </Text>
+        <TextInput
+          placeholder="Type a message or /help..."
+          suggestions={SLASH_SUGGESTIONS}
+          onSubmit={handleSubmit}
+          onChange={setInputValue}
+        />
+      </Box>
 
       <StatusBar
         mode={mode}

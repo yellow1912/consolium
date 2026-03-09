@@ -7,7 +7,7 @@ import { parseSlash } from "./slash.js"
 import { classifyIntent } from "./intent.js"
 import { SessionManager } from "../core/session/index.js"
 import { CouncilRunner } from "../core/council/index.js"
-import { buildDefaultRegistry, type AdapterRegistry } from "../core/adapters/registry.js"
+import { buildDefaultRegistry, buildPersonaRegistry, type AdapterRegistry } from "../core/adapters/registry.js"
 import { ModelCache } from "../core/models/cache.js"
 import StatusBar from "./components/StatusBar.js"
 import MessageList from "./components/MessageList.js"
@@ -17,6 +17,7 @@ type AppProps = {
   initialMode?: Mode
   initialRouter?: string
   resumeSessionId?: string
+  personas?: boolean
 }
 
 const SLASH_SUGGESTIONS = [
@@ -34,13 +35,13 @@ const SLASH_SUGGESTIONS = [
   "/quit",
 ]
 
-export default function App({ initialMode = "council", initialRouter = "claude", resumeSessionId }: AppProps) {
+export default function App({ initialMode = "council", initialRouter = "claude", resumeSessionId, personas }: AppProps) {
   const { exit } = useApp()
 
   // --- Core refs (persist across renders) ---
   const sessionMgr = useRef(new SessionManager())
   const modelCache = useRef(new ModelCache())
-  const registryRef = useRef<AdapterRegistry>(buildDefaultRegistry())
+  const registryRef = useRef<AdapterRegistry>(personas ? buildPersonaRegistry() : buildDefaultRegistry())
 
   // --- State ---
   const [mode, setMode] = useState<Mode>(initialMode)

@@ -14,6 +14,7 @@ export async function startInkCLI(options: {
       initialMode={options.mode}
       initialRouter={options.router}
       resumeSessionId={options.resumeId}
+      personas={options.personas}
     />
   )
   await waitUntilExit()

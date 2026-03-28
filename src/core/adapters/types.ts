@@ -31,4 +31,5 @@ export interface AgentAdapter {
   stream?(prompt: string, context: Message[], options?: QueryOptions): AsyncIterable<string>
   isAvailable(): Promise<boolean>
   getModels(): Promise<ModelInfo[]>
+  readonly lastSessionId?: string
 }

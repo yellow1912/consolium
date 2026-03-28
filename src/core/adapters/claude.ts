@@ -23,6 +23,8 @@ export class ClaudeAdapter extends SubprocessAdapter {
     this.role = role
   }
 
+  get lastSessionId(): string { return this._sessionId }
+
   async getModels(): Promise<ModelInfo[]> {
     return [
       { id: "claude-opus-4-6", name: "Claude Opus 4.6", capabilities: ["reasoning"] },

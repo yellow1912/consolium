@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { Box, Text, useApp } from "ink"
 import { TextInput, Spinner } from "@inkjs/ui"
 import type { Mode } from "./types.js"
-import type { Message } from "../core/adapters/types.js"
+import type { Message as MessageData } from "../core/adapters/types.js"
 import { parseSlash } from "./slash.js"
 import { classifyIntent } from "./intent.js"
 import { SessionManager } from "../core/session/index.js"
@@ -12,6 +12,7 @@ import { ModelCache } from "../core/models/cache.js"
 import StatusBar from "./components/StatusBar.js"
 import MessageList from "./components/MessageList.js"
 import SessionPicker from "./components/SessionPicker.js"
+import Message from "./components/Message.js"
 
 type AppProps = {
   initialMode?: Mode
@@ -49,8 +50,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
   const [mode, setMode] = useState<Mode>(initialMode)
   const [routerName, setRouterName] = useState(initialRouter)
   const [sessionId, setSessionId] = useState("")
-  const [context, setContext] = useState<Message[]>([])
-  const contextRef = useRef<Message[]>(context)
+  const [context, setContext] = useState<MessageData[]>([])
+  const contextRef = useRef<MessageData[]>(context)
   const [isLoading, setIsLoading] = useState(false)
   const [loadingText, setLoadingText] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -60,6 +61,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
   const [debateMaxRounds, setDebateMaxRounds] = useState(5)
   const [resumed, setResumed] = useState(false)
   const [inputValue, setInputValue] = useState("")
+  const [liveStreams, setLiveStreams] = useState<Record<string, string>>({})
   const [awaitingRerun, setAwaitingRerun] = useState(false)
   const rerunPromptRef = useRef<string | null>(null)
   const rerunCountRef = useRef(0)
@@ -114,9 +116,18 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setError(null)
   }, [])
 
+  // --- Streaming helpers ---
+  const onStreamToken = useCallback((agentName: string, token: string) => {
+    setLiveStreams(prev => ({ ...prev, [agentName]: (prev[agentName] ?? "") + token }))
+  }, [])
+
+  const clearLiveStream = useCallback((agentName: string) => {
+    setLiveStreams(prev => { const n = { ...prev }; delete n[agentName]; return n })
+  }, [])
+
   // --- Add a message to context + persist ---
-  const addMessage = useCallback((role: Message["role"], agent: string | null, content: string) => {
-    const msg: Message = { role, agent, content }
+  const addMessage = useCallback((role: MessageData["role"], agent: string | null, content: string) => {
+    const msg: MessageData = { role, agent, content }
     setContext(prev => {
       const next = [...prev, msg]
       contextRef.current = next
@@ -135,13 +146,17 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setError(null)
     try {
       addMessage("user", null, prompt)
+      let dispatchAgent = ""
       const result = await runner.dispatch(prompt, contextRef.current, {
         onRouted: (agent, model) => {
+          dispatchAgent = agent
           const modelInfo = model ? ` (${model})` : ""
           addMessage("system", null, `Router → ${agent}${modelInfo}`)
           setLoadingText(`${agent} is thinking...`)
         },
+        onStream: (token) => onStreamToken(dispatchAgent, token),
       })
+      clearLiveStream(dispatchAgent)
       if (result.agent) sessionMgr.current.upsertParticipant(sessionId, result.agent)
       addMessage("agent", result.agent, result.content)
     } catch (e) {
@@ -160,11 +175,14 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     try {
       addMessage("user", null, prompt)
       const result = await runner.council(prompt, contextRef.current, {
+        onAgentStream: (agentName, token) => onStreamToken(agentName, token),
         onAgentComplete: (resp) => {
+          clearLiveStream(resp.agent)
           if (resp.agent) sessionMgr.current.upsertParticipant(sessionId, resp.agent)
           addMessage("agent", resp.agent, resp.content)
         },
         onAgentError: (agentName, error) => {
+          clearLiveStream(agentName)
           addMessage("system", null, `${agentName} failed: ${error.message}`)
         },
       })
@@ -196,7 +214,9 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           addMessage("system", null, `Router → ${executor}${modelInfo}`)
           setLoadingText(`${executor} is working...`)
         },
+        onExecutorStream: (token) => onStreamToken("pipeline", token),
         onExecutorComplete: (content) => {
+          clearLiveStream("pipeline")
           if (currentTaskId) sessionMgr.current.updateTaskStatus(currentTaskId, "done")
           addMessage("agent", "pipeline", content)
           setLoadingText("Reviewing...")
@@ -643,7 +663,11 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     <Box flexDirection="column">
       <MessageList messages={context} resumed={resumed} />
 
-      {isLoading && (
+      {Object.entries(liveStreams).map(([agent, content]) => (
+        <Message key={`stream-${agent}`} message={{ role: "agent", agent, content: content + "▋" }} />
+      ))}
+
+      {isLoading && Object.keys(liveStreams).length === 0 && (
         <Box marginY={1}>
           <Spinner label={loadingText || "Working..."} />
         </Box>

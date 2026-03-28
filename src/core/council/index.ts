@@ -86,6 +86,7 @@ export class CouncilRunner {
     context: Message[],
     mode: string,
     model?: string,
+    onToken?: (token: string) => void,
   ): Promise<AgentResponse> {
     const agentSessionId = this.getStoredSessionId(agent.name)
     const isResume = agentSessionId !== undefined
@@ -95,6 +96,21 @@ export class CouncilRunner {
       agentSessionId,
       systemPrompt: isResume ? undefined : this.buildSystemPrompt(agent.name, mode),
     }
+
+    if (onToken && agent.queryStream) {
+      const start = Date.now()
+      const effectiveContext = isResume ? [] : context
+      let content = ""
+      for await (const token of agent.queryStream(deltaPrompt, effectiveContext, options)) {
+        content += token
+        onToken(token)
+      }
+      const sessionId = agent.lastSessionId
+      const resp: AgentResponse = { agent: agent.name, content: content.trim(), durationMs: Date.now() - start, sessionId }
+      if (resp.sessionId) this.saveSessionId(agent.name, resp.sessionId)
+      return resp
+    }
+
     const resp = isResume
       ? await agent.query(deltaPrompt, [], options)
       : await agent.query(prompt, context, options)
@@ -116,10 +132,12 @@ export class CouncilRunner {
   async council(prompt: string, context: Message[], options?: {
     onAgentComplete?: (response: AgentResponse) => void
     onAgentError?: (agentName: string, error: Error) => void
+    onAgentStream?: (agentName: string, token: string) => void
   }): Promise<CouncilResult> {
     const respondents = this.adapters.filter(a => a.name !== this.router.name)
     const settled = await Promise.allSettled(respondents.map(async a => {
-      const resp = await this.queryAgent(a, prompt, context, "council")
+      const onToken = options?.onAgentStream ? (token: string) => options.onAgentStream!(a.name, token) : undefined
+      const resp = await this.queryAgent(a, prompt, context, "council", undefined, onToken)
       options?.onAgentComplete?.(resp)
       return resp
     }))
@@ -145,6 +163,7 @@ export class CouncilRunner {
 
   async dispatch(prompt: string, context: Message[], options?: {
     onRouted?: (agent: string, model?: string) => void
+    onStream?: (token: string) => void
   }): Promise<AgentResponse> {
     const agentModels = await this.getAgentModelPrompt()
     const routerResp = await this.router.query(
@@ -160,11 +179,12 @@ export class CouncilRunner {
     const agent = this.adapters.find(a => a.name === selection.assignTo) ?? this.adapters[0]
     if (!agent) throw new Error("No agent available for dispatch")
     options?.onRouted?.(agent.name, selection.model)
-    return this.queryAgent(agent, prompt, context, "dispatch", selection.model)
+    return this.queryAgent(agent, prompt, context, "dispatch", selection.model, options?.onStream)
   }
 
   async pipeline(prompt: string, context: Message[], options?: {
     onRouted?: (executor: string, model?: string) => void
+    onExecutorStream?: (token: string) => void
     onExecutorComplete?: (content: string) => void
     onReviewComplete?: (review: { reviewer: string; verdict: string; content: string }) => void
   }): Promise<PipelineResult> {
@@ -185,7 +205,7 @@ export class CouncilRunner {
     options?.onRouted?.(executor.name, selection.model)
 
     // Executor does the work
-    const taskResp = await this.queryAgent(executor, prompt, context, "pipeline", selection.model)
+    const taskResp = await this.queryAgent(executor, prompt, context, "pipeline", selection.model, options?.onExecutorStream)
     options?.onExecutorComplete?.(taskResp.content)
 
     // Peers review (everyone except executor and router)

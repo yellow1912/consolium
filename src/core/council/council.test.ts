@@ -247,6 +247,119 @@ describe("pipeline mode", () => {
   })
 })
 
+describe("reviewContent", () => {
+  it("fires onReviewComplete for each reviewer", async () => {
+    const completed: string[] = []
+    const runner = new CouncilRunner({
+      router: mock("claude", ""),
+      adapters: [
+        mock("codex", JSON.stringify({ verdict: "approved", content: "looks good" })),
+        mock("gemini", JSON.stringify({ verdict: "changes_requested", content: "needs work" })),
+      ],
+    })
+    await runner.reviewContent("some content", "original prompt", {
+      onReviewComplete: (r) => completed.push(r.reviewer),
+    })
+    expect(completed).toContain("codex")
+    expect(completed).toContain("gemini")
+  })
+
+  it("returns approved: true when all reviewers approve", async () => {
+    const runner = new CouncilRunner({
+      router: mock("claude", ""),
+      adapters: [
+        mock("codex", JSON.stringify({ verdict: "approved", content: "ok" })),
+        mock("gemini", JSON.stringify({ verdict: "approved", content: "ok" })),
+      ],
+    })
+    const result = await runner.reviewContent("content", "prompt")
+    expect(result.approved).toBe(true)
+    expect(result.reviews).toHaveLength(2)
+  })
+
+  it("returns approved: false when any reviewer requests changes", async () => {
+    const runner = new CouncilRunner({
+      router: mock("claude", ""),
+      adapters: [
+        mock("codex", JSON.stringify({ verdict: "approved", content: "ok" })),
+        mock("gemini", JSON.stringify({ verdict: "changes_requested", content: "fix it" })),
+      ],
+    })
+    const result = await runner.reviewContent("content", "prompt")
+    expect(result.approved).toBe(false)
+  })
+
+  it("excludes router from reviewers", async () => {
+    const called: string[] = []
+    const runner = new CouncilRunner({
+      router: { name: "claude", isAvailable: async () => true, getModels: async () => [], query: async () => { called.push("claude"); return { agent: "claude", content: "{}", durationMs: 1 } } },
+      adapters: [mock("codex", JSON.stringify({ verdict: "approved", content: "ok" }))],
+    })
+    await runner.reviewContent("content", "prompt")
+    expect(called).toHaveLength(0) // router not called for reviews
+  })
+})
+
+describe("council graceful degradation", () => {
+  it("continues with remaining agents when one fails", async () => {
+    const failingAdapter: AgentAdapter = {
+      name: "codex",
+      isAvailable: async () => true,
+      getModels: async () => [],
+      query: async () => { throw new Error("codex unavailable") },
+    }
+    const errors: string[] = []
+    const runner = new CouncilRunner({
+      router: mock("claude", "synthesis"),
+      adapters: [failingAdapter, mock("gemini", "gemini answer")],
+    })
+    const result = await runner.council("question", [], {
+      onAgentError: (name) => errors.push(name),
+    })
+    expect(errors).toContain("codex")
+    expect(result.responses).toHaveLength(1)
+    expect(result.responses[0].agent).toBe("gemini")
+    expect(result.synthesis).toBe("synthesis")
+  })
+
+  it("throws when all agents fail", async () => {
+    const failing = (name: string): AgentAdapter => ({
+      name,
+      isAvailable: async () => true,
+      getModels: async () => [],
+      query: async () => { throw new Error("unavailable") },
+    })
+    const runner = new CouncilRunner({
+      router: mock("claude", ""),
+      adapters: [failing("codex"), failing("gemini")],
+    })
+    expect(runner.council("question", [])).rejects.toThrow("All agents failed")
+  })
+})
+
+describe("pipeline graceful degradation", () => {
+  it("continues if a reviewer fails, skips that review", async () => {
+    const failingReviewer: AgentAdapter = {
+      name: "gemini",
+      isAvailable: async () => true,
+      getModels: async () => [],
+      query: async () => { throw new Error("gemini unavailable") },
+    }
+    const runner = new CouncilRunner({
+      router: mock("claude", JSON.stringify({ assignTo: "codex" })),
+      adapters: [
+        mock("codex", "the work"),
+        failingReviewer,
+      ],
+    })
+    const result = await runner.pipeline("task", [])
+    // gemini failed as reviewer — result still returns with zero reviews
+    expect(result.taskContent).toBe("the work")
+    expect(result.reviews).toHaveLength(0)
+    expect(result.approved).toBe(true) // no reviews = vacuously approved
+  })
+})
+
 describe("debate mode", () => {
   it("round 1 collects responses from all agents", async () => {
     const runner = new CouncilRunner({

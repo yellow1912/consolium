@@ -115,13 +115,24 @@ export class CouncilRunner {
 
   async council(prompt: string, context: Message[], options?: {
     onAgentComplete?: (response: AgentResponse) => void
+    onAgentError?: (agentName: string, error: Error) => void
   }): Promise<CouncilResult> {
     const respondents = this.adapters.filter(a => a.name !== this.router.name)
-    const responses = await Promise.all(respondents.map(async a => {
+    const settled = await Promise.allSettled(respondents.map(async a => {
       const resp = await this.queryAgent(a, prompt, context, "council")
       options?.onAgentComplete?.(resp)
       return resp
     }))
+    const responses: AgentResponse[] = []
+    settled.forEach((result, i) => {
+      if (result.status === "fulfilled") {
+        responses.push(result.value)
+      } else {
+        const err = result.reason instanceof Error ? result.reason : new Error(String(result.reason))
+        options?.onAgentError?.(respondents[i].name, err)
+      }
+    })
+    if (responses.length === 0) throw new Error("All agents failed to respond")
     const synthesisPrompt = [
       `You asked: "${prompt}"`,
       `Agent responses:`,
@@ -185,7 +196,7 @@ export class CouncilRunner {
       `Review and respond with JSON only: { "verdict": "approved" | "changes_requested", "content": "<your feedback>" }`,
     ].join("\n")
 
-    const reviews = await Promise.all(reviewers.map(async a => {
+    const reviewSettled = await Promise.allSettled(reviewers.map(async a => {
       const r = await this.queryAgent(a, reviewPrompt, [], "pipeline") // reviewers get full task+result in prompt, not from context
       let review: { reviewer: string; verdict: string; content: string }
       try {
@@ -201,6 +212,9 @@ export class CouncilRunner {
       options?.onReviewComplete?.(review)
       return review
     }))
+    const reviews = reviewSettled
+      .filter((r): r is PromiseFulfilledResult<{ reviewer: string; verdict: string; content: string }> => r.status === "fulfilled")
+      .map(r => r.value)
 
     return {
       taskContent: taskResp.content,
@@ -222,7 +236,7 @@ export class CouncilRunner {
       `Result:\n${taskContent}`,
       `Review and respond with JSON only: { "verdict": "approved" | "changes_requested", "content": "<your feedback>" }`,
     ].join("\n")
-    const reviews = await Promise.all(reviewers.map(async a => {
+    const settled = await Promise.allSettled(reviewers.map(async a => {
       const r = await this.queryAgent(a, reviewPrompt, [], "pipeline")
       let review: { reviewer: string; verdict: string; content: string }
       try {
@@ -238,6 +252,9 @@ export class CouncilRunner {
       options?.onReviewComplete?.(review)
       return review
     }))
+    const reviews = settled
+      .filter((r): r is PromiseFulfilledResult<{ reviewer: string; verdict: string; content: string }> => r.status === "fulfilled")
+      .map(r => r.value)
     return { reviews, approved: reviews.every(r => r.verdict === "approved") }
   }
 

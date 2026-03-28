@@ -30,6 +30,7 @@ const SLASH_SUGGESTIONS = [
   "/resume",
   "/history",
   "/review",
+  "/stop",
   "/help",
   "/debate",
   "/exit",
@@ -63,6 +64,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
   const rerunPromptRef = useRef<string | null>(null)
   const rerunCountRef = useRef(0)
   const MAX_PIPELINE_RERUNS = 3
+  const stopDebateRef = useRef(false)
+  const isDebatingRef = useRef(false)
   type QueueEntry = string | { text: string; skipClassification: boolean }
   const messageQueue = useRef<QueueEntry[]>([])
   const isProcessing = useRef(false)
@@ -161,6 +164,9 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           if (resp.agent) sessionMgr.current.upsertParticipant(sessionId, resp.agent)
           addMessage("agent", resp.agent, resp.content)
         },
+        onAgentError: (agentName, error) => {
+          addMessage("system", null, `${agentName} failed: ${error.message}`)
+        },
       })
       addMessage("agent", "synthesis", result.synthesis)
     } catch (e) {
@@ -227,6 +233,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setIsLoading(true)
     setLoadingText("Starting debate...")
     setError(null)
+    isDebatingRef.current = true
     try {
       addMessage("user", null, prompt)
       const result = await runner.debate(prompt, contextRef.current, {
@@ -235,6 +242,10 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           setLoadingText(`Debate round ${roundNum} complete...`)
           for (const resp of responses) {
             addMessage("agent", resp.agent, `[Round ${roundNum}] ${resp.content}`)
+          }
+          if (stopDebateRef.current) {
+            stopDebateRef.current = false
+            return false
           }
           return undefined // auto-continue
         },
@@ -247,6 +258,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
+      isDebatingRef.current = false
+      stopDebateRef.current = false
       setIsLoading(false)
       setLoadingText("")
     }
@@ -298,8 +311,24 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       case "agents": {
         const registry = registryRef.current
         const agents = registry.all()
-        const lines = agents.map(a => `  - ${a.name}${a.name === routerName ? " (router)" : ""}`)
-        addMessage("system", null, `Available agents:\n${lines.join("\n")}`)
+        setIsLoading(true)
+        setLoadingText("Checking agent availability...")
+        try {
+          const statuses = await Promise.all(
+            agents.map(async a => ({
+              name: a.name,
+              available: await a.isAvailable().catch(() => false),
+              isRouter: a.name === routerName,
+            }))
+          )
+          const lines = statuses.map(s =>
+            `  ${s.available ? "✓" : "✗"} ${s.name}${s.isRouter ? " (router)" : ""}`
+          )
+          addMessage("system", null, `Agents:\n${lines.join("\n")}`)
+        } finally {
+          setIsLoading(false)
+          setLoadingText("")
+        }
         break
       }
 
@@ -474,6 +503,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           "  /resume [id]                              — resume a session",
           "  /history                                  — show session history",
           "  /review                                   — trigger peer review on last response",
+          "  /stop                                     — stop debate after current round",
           "  /debate rounds <n>                        — set max debate rounds",
           "  /help                                     — show this help",
           "  /exit                                     — quit",
@@ -571,6 +601,12 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     const trimmed = value.trim()
     if (!trimmed) return
     setInputValue("")
+    // /stop during a debate bypasses the queue — signals the runner directly
+    if (trimmed === "/stop" && isDebatingRef.current) {
+      stopDebateRef.current = true
+      addMessage("system", null, "Stopping debate after current round...")
+      return
+    }
     // Skip if this exact message is already queued (prevents spam from impatient re-submissions)
     const queue = messageQueue.current
     const lastEntry = queue.length > 0 ? queue[queue.length - 1] : null

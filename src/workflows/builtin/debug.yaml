@@ -1,0 +1,10 @@
+name: debug
+description: Analyze a bug or error then implement a fix
+trust: checkpoint
+steps:
+  - agent: claude
+    task: "Analyze this bug or error: {input}. Identify the root cause, explain why it happens, and propose a fix."
+    output: analysis
+  - agent: codex
+    task: "Implement this fix:\n\n{analysis}"
+    output: fix

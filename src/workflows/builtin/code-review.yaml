@@ -1,0 +1,10 @@
+name: code-review
+description: Review code for issues then apply fixes
+trust: autonomous
+steps:
+  - agent: claude
+    task: "Review the following code or file: {input}. List all issues: bugs, style problems, missing tests, security concerns."
+    output: review_notes
+  - agent: codex
+    task: "Fix the issues identified in this review:\n\n{review_notes}\n\nApply fixes to the relevant code."
+    output: fixed_code

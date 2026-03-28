@@ -1,0 +1,13 @@
+name: feature-build
+description: Research best practices, write an implementation plan, then implement it
+trust: checkpoint
+steps:
+  - agent: gemini
+    task: "Research best practices and approaches for: {input}. Summarize key patterns and considerations."
+    output: research
+  - agent: claude
+    task: "Based on this research:\n\n{research}\n\nWrite a detailed implementation plan for: {input}"
+    output: plan
+  - agent: codex
+    task: "Implement the following plan:\n\n{plan}"
+    output: implementation

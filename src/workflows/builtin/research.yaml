@@ -1,0 +1,10 @@
+name: research
+description: Deep research on a topic followed by a structured report
+trust: autonomous
+steps:
+  - agent: gemini
+    task: "Research thoroughly: {input}. Provide a comprehensive summary with key findings, trade-offs, and examples."
+    output: research
+  - agent: claude
+    task: "Based on this research:\n\n{research}\n\nWrite a structured report with actionable insights and recommendations."
+    output: report

@@ -31,6 +31,7 @@ const SLASH_SUGGESTIONS = [
   "/resume",
   "/history",
   "/review",
+  "/workflow",
   "/stop",
   "/help",
   "/debate",
@@ -68,6 +69,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
   const MAX_PIPELINE_RERUNS = 3
   const stopDebateRef = useRef(false)
   const isDebatingRef = useRef(false)
+  const [awaitingWorkflow, setAwaitingWorkflow] = useState(false)
+  const workflowCheckpointRef = useRef<((cont: boolean) => void) | null>(null)
   type QueueEntry = string | { text: string; skipClassification: boolean }
   const messageQueue = useRef<QueueEntry[]>([])
   const isProcessing = useRef(false)
@@ -510,6 +513,99 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         break
       }
 
+      case "workflow": {
+        const sub = args[0]
+
+        if (!sub || sub === "list") {
+          setIsLoading(true)
+          setLoadingText("Loading workflows...")
+          try {
+            const { loadAllWorkflows } = await import("../workflows/loader.js")
+            const workflows = await loadAllWorkflows()
+            if (workflows.size === 0) {
+              addMessage("system", null, "No workflows found.")
+            } else {
+              const lines = [...workflows.values()].map(w =>
+                `  ${w.name}${w.description ? ` — ${w.description}` : ""} [${w.trust}]`
+              )
+              addMessage("system", null, `Available workflows:\n${lines.join("\n")}`)
+            }
+          } finally {
+            setIsLoading(false)
+            setLoadingText("")
+          }
+          break
+        }
+
+        if (sub === "show") {
+          const name = args[1]
+          if (!name) { setError("Usage: /workflow show <name>"); return }
+          const { loadWorkflow } = await import("../workflows/loader.js")
+          const wf = await loadWorkflow(name)
+          if (!wf) { setError(`Workflow "${name}" not found.`); return }
+          const lines = [
+            `name: ${wf.name}`,
+            wf.description ? `description: ${wf.description}` : null,
+            `trust: ${wf.trust}`,
+            `steps:`,
+            ...wf.steps.map((s, i) =>
+              `  ${i + 1}. [${s.agent ?? s.mode ?? "dispatch"}] ${s.task.slice(0, 80)}${s.task.length > 80 ? "..." : ""}${s.output ? ` → ${s.output}` : ""}`
+            ),
+          ].filter(Boolean)
+          addMessage("system", null, lines.join("\n"))
+          break
+        }
+
+        if (sub === "run") {
+          const name = args[1]
+          if (!name) { setError("Usage: /workflow run <name> [input]"); return }
+          const input = args.slice(2).join(" ")
+          const { loadWorkflow } = await import("../workflows/loader.js")
+          const wf = await loadWorkflow(name)
+          if (!wf) { setError(`Workflow "${name}" not found.`); return }
+          if (!input) { setError("Usage: /workflow run <name> <input>"); return }
+
+          const { WorkflowRunner } = await import("../workflows/runner.js")
+          const wfRunner = new WorkflowRunner(registryRef.current, routerName)
+          setIsLoading(true)
+          addMessage("system", null, `Starting workflow: ${wf.name}`)
+          try {
+            const streamAgent = "workflow"
+            await wfRunner.run(wf, input, {
+              onStepStart: (stepNum, total, agent, task) => {
+                setLoadingText(`Step ${stepNum}/${total}: ${agent}...`)
+                addMessage("system", null, `Step ${stepNum}/${total} [${agent}]: ${task.slice(0, 120)}${task.length > 120 ? "..." : ""}`)
+              },
+              onStepComplete: (stepNum, outputKey, content) => {
+                clearLiveStream(streamAgent)
+                addMessage("agent", `step-${stepNum}`, content)
+                sessionMgr.current.addMessage(sessionId, "agent", `step-${stepNum}`, content)
+              },
+              onStream: (token) => onStreamToken(streamAgent, token),
+              onCheckpoint: (stepNum, total) => new Promise(resolve => {
+                clearLiveStream(streamAgent)
+                workflowCheckpointRef.current = resolve
+                setAwaitingWorkflow(true)
+                addMessage("system", null, `Step ${stepNum}/${total} complete. Continue to next step? (y/n)`)
+              }),
+            })
+            addMessage("system", null, `Workflow "${wf.name}" complete.`)
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e))
+          } finally {
+            clearLiveStream("workflow")
+            workflowCheckpointRef.current = null
+            setAwaitingWorkflow(false)
+            setIsLoading(false)
+            setLoadingText("")
+          }
+          break
+        }
+
+        setError("Usage: /workflow <list|show|run> [args]")
+        break
+      }
+
       case "help": {
         const helpText = [
           "Commands:",
@@ -523,6 +619,9 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           "  /resume [id]                              — resume a session",
           "  /history                                  — show session history",
           "  /review                                   — trigger peer review on last response",
+          "  /workflow list                            — list available workflows",
+          "  /workflow show <name>                     — show workflow steps",
+          "  /workflow run <name> <input>              — run a workflow",
           "  /stop                                     — stop debate after current round",
           "  /debate rounds <n>                        — set max debate rounds",
           "  /help                                     — show this help",
@@ -627,6 +726,16 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       addMessage("system", null, "Stopping debate after current round...")
       return
     }
+    // Workflow checkpoint — resolve the waiting Promise directly
+    if (workflowCheckpointRef.current) {
+      const resolve = workflowCheckpointRef.current
+      workflowCheckpointRef.current = null
+      setAwaitingWorkflow(false)
+      const yes = trimmed.toLowerCase() === "y" || trimmed.toLowerCase() === "yes"
+      if (!yes) addMessage("system", null, "Workflow stopped.")
+      resolve(yes)
+      return
+    }
     // Skip if this exact message is already queued (prevents spam from impatient re-submissions)
     const queue = messageQueue.current
     const lastEntry = queue.length > 0 ? queue[queue.length - 1] : null
@@ -682,8 +791,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       <Box>
         <Text bold color="green">&gt; </Text>
         <TextInput
-          placeholder={awaitingRerun ? "Re-run with reviewer feedback? (y/n)" : "Type a message or /help..."}
-          suggestions={awaitingRerun ? [] : SLASH_SUGGESTIONS}
+          placeholder={awaitingRerun ? "Re-run with reviewer feedback? (y/n)" : awaitingWorkflow ? "Continue to next step? (y/n)" : "Type a message or /help..."}
+          suggestions={awaitingRerun || awaitingWorkflow ? [] : SLASH_SUGGESTIONS}
           onSubmit={handleSubmit}
           onChange={setInputValue}
         />

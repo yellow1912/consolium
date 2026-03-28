@@ -571,15 +571,21 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           addMessage("system", null, `Starting workflow: ${wf.name}`)
           try {
             const streamAgent = "workflow"
+            let currentTaskId: string | null = null
             await wfRunner.run(wf, input, {
               onStepStart: (stepNum, total, agent, task) => {
+                const dbTask = sessionMgr.current.createTask(sessionId, task, agent)
+                currentTaskId = dbTask.id
+                sessionMgr.current.updateTaskStatus(dbTask.id, "running")
+                sessionMgr.current.upsertParticipant(sessionId, agent)
                 setLoadingText(`Step ${stepNum}/${total}: ${agent}...`)
                 addMessage("system", null, `Step ${stepNum}/${total} [${agent}]: ${task.slice(0, 120)}${task.length > 120 ? "..." : ""}`)
               },
-              onStepComplete: (stepNum, outputKey, content) => {
+              onStepComplete: (stepNum, _outputKey, content) => {
+                if (currentTaskId) sessionMgr.current.updateTaskStatus(currentTaskId, "done")
+                currentTaskId = null
                 clearLiveStream(streamAgent)
                 addMessage("agent", `step-${stepNum}`, content)
-                sessionMgr.current.addMessage(sessionId, "agent", `step-${stepNum}`, content)
               },
               onStream: (token) => onStreamToken(streamAgent, token),
               onCheckpoint: (stepNum, total) => new Promise(resolve => {

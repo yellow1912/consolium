@@ -2,7 +2,7 @@ import type { AgentAdapter } from "../core/adapters/types"
 import type { AdapterRegistry } from "../core/adapters/registry"
 
 export type IntentResult =
-  | { type: "command"; command: string; args: string[] }
+  | { type: "command"; command: string; args: string[]; followup?: string }
   | { type: "message" }
 
 export async function classifyIntent(
@@ -31,7 +31,7 @@ Available commands:
 The user said: "${input}"
 
 If this is a control command for the CLI, respond with JSON only:
-{ "type": "command", "command": "<command>", "args": ["<arg1>", "<arg2>"] }
+{ "type": "command", "command": "<command>", "args": ["<arg1>", "<arg2>"], "followup": "<remaining text to process after command, e.g. the topic of a debate>" }
 
 If this is a regular message to the AI agents, respond with JSON only:
 { "type": "message" }
@@ -47,6 +47,7 @@ Respond with JSON only. No explanation.`
         type: "command",
         command: parsed.command,
         args: Array.isArray(parsed.args) ? parsed.args.map(String) : [],
+        followup: typeof parsed.followup === "string" ? parsed.followup : undefined,
       }
     }
     return { type: "message" }

@@ -113,9 +113,15 @@ export class CouncilRunner {
     return lines.join("\n")
   }
 
-  async council(prompt: string, context: Message[]): Promise<CouncilResult> {
+  async council(prompt: string, context: Message[], options?: {
+    onAgentComplete?: (response: AgentResponse) => void
+  }): Promise<CouncilResult> {
     const respondents = this.adapters.filter(a => a.name !== this.router.name)
-    const responses = await Promise.all(respondents.map(a => this.queryAgent(a, prompt, context, "council")))
+    const responses = await Promise.all(respondents.map(async a => {
+      const resp = await this.queryAgent(a, prompt, context, "council")
+      options?.onAgentComplete?.(resp)
+      return resp
+    }))
     const synthesisPrompt = [
       `You asked: "${prompt}"`,
       `Agent responses:`,
@@ -127,7 +133,7 @@ export class CouncilRunner {
   }
 
   async dispatch(prompt: string, context: Message[], options?: {
-    onRouted?: (agent: string) => void
+    onRouted?: (agent: string, model?: string) => void
   }): Promise<AgentResponse> {
     const agentModels = await this.getAgentModelPrompt()
     const routerResp = await this.router.query(
@@ -142,13 +148,14 @@ export class CouncilRunner {
     }
     const agent = this.adapters.find(a => a.name === selection.assignTo) ?? this.adapters[0]
     if (!agent) throw new Error("No agent available for dispatch")
-    options?.onRouted?.(agent.name)
+    options?.onRouted?.(agent.name, selection.model)
     return this.queryAgent(agent, prompt, context, "dispatch", selection.model)
   }
 
   async pipeline(prompt: string, context: Message[], options?: {
-    onRouted?: (executor: string) => void
-    onReviewing?: (reviewers: string[]) => void
+    onRouted?: (executor: string, model?: string) => void
+    onExecutorComplete?: (content: string) => void
+    onReviewComplete?: (review: { reviewer: string; verdict: string; content: string }) => void
   }): Promise<PipelineResult> {
     // Router picks executor (routing call — direct, no session tracking)
     const agentModels = await this.getAgentModelPrompt()
@@ -164,14 +171,14 @@ export class CouncilRunner {
     }
     const executor = this.adapters.find(a => a.name === selection.assignTo) ?? this.adapters[0]
     if (!executor) throw new Error("No executor agent available")
-    options?.onRouted?.(executor.name)
+    options?.onRouted?.(executor.name, selection.model)
 
     // Executor does the work
     const taskResp = await this.queryAgent(executor, prompt, context, "pipeline", selection.model)
+    options?.onExecutorComplete?.(taskResp.content)
 
     // Peers review (everyone except executor and router)
     const reviewers = this.adapters.filter(a => a.name !== executor.name && a.name !== this.router.name)
-    options?.onReviewing?.(reviewers.map(a => a.name))
     const reviewPrompt = [
       `Task: "${prompt}"`,
       `Result:\n${taskResp.content}`,
@@ -180,16 +187,19 @@ export class CouncilRunner {
 
     const reviews = await Promise.all(reviewers.map(async a => {
       const r = await this.queryAgent(a, reviewPrompt, [], "pipeline") // reviewers get full task+result in prompt, not from context
+      let review: { reviewer: string; verdict: string; content: string }
       try {
         const parsed = JSON.parse(r.content)
-        return {
+        review = {
           reviewer: a.name,
           verdict: (parsed.verdict ?? "approved") as string,
           content: (parsed.content ?? r.content) as string,
         }
       } catch {
-        return { reviewer: a.name, verdict: "approved", content: r.content }
+        review = { reviewer: a.name, verdict: "approved", content: r.content }
       }
+      options?.onReviewComplete?.(review)
+      return review
     }))
 
     return {

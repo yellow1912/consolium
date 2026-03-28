@@ -58,6 +58,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
   const [debateMaxRounds, setDebateMaxRounds] = useState(5)
   const [resumed, setResumed] = useState(false)
   const [inputValue, setInputValue] = useState("")
+  const [awaitingRerun, setAwaitingRerun] = useState(false)
+  const rerunPromptRef = useRef<string | null>(null)
   type QueueEntry = string | { text: string; skipClassification: boolean }
   const messageQueue = useRef<QueueEntry[]>([])
   const isProcessing = useRef(false)
@@ -128,7 +130,11 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     try {
       addMessage("user", null, prompt)
       const result = await runner.dispatch(prompt, contextRef.current, {
-        onRouted: (agent) => setLoadingText(`${agent} is thinking...`),
+        onRouted: (agent, model) => {
+          const modelInfo = model ? ` (${model})` : ""
+          addMessage("system", null, `Router → ${agent}${modelInfo}`)
+          setLoadingText(`${agent} is thinking...`)
+        },
       })
       addMessage("agent", result.agent, result.content)
     } catch (e) {
@@ -146,10 +152,11 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setError(null)
     try {
       addMessage("user", null, prompt)
-      const result = await runner.council(prompt, contextRef.current)
-      for (const resp of result.responses) {
-        addMessage("agent", resp.agent, resp.content)
-      }
+      const result = await runner.council(prompt, contextRef.current, {
+        onAgentComplete: (resp) => {
+          addMessage("agent", resp.agent, resp.content)
+        },
+      })
       addMessage("agent", "synthesis", result.synthesis)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -167,16 +174,27 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     try {
       addMessage("user", null, prompt)
       const result = await runner.pipeline(prompt, contextRef.current, {
-        onRouted: (executor) => setLoadingText(`${executor} is working...`),
-        onReviewing: (reviewers) => setLoadingText(`Reviewing: ${reviewers.join(", ")}...`),
+        onRouted: (executor, model) => {
+          const modelInfo = model ? ` (${model})` : ""
+          addMessage("system", null, `Router → ${executor}${modelInfo}`)
+          setLoadingText(`${executor} is working...`)
+        },
+        onExecutorComplete: (content) => {
+          addMessage("agent", "pipeline", content)
+          setLoadingText("Reviewing...")
+        },
+        onReviewComplete: (review) => {
+          const verdict = review.verdict === "approved" ? "[APPROVED]" : "[CHANGES REQUESTED]"
+          addMessage("agent", review.reviewer, `${verdict} ${review.content}`)
+        },
       })
-      addMessage("agent", "pipeline", result.taskContent)
-      for (const review of result.reviews) {
-        const verdict = review.verdict === "approved" ? "[APPROVED]" : "[CHANGES REQUESTED]"
-        addMessage("agent", review.reviewer, `${verdict} ${review.content}`)
+      if (result.approved) {
+        addMessage("system", null, "All reviewers approved.")
+      } else {
+        rerunPromptRef.current = prompt
+        setAwaitingRerun(true)
+        addMessage("system", null, "Reviewers requested changes. Re-run with their feedback? (y/n)")
       }
-      const summaryVerdict = result.approved ? "All reviewers approved." : "Some reviewers requested changes."
-      addMessage("system", null, summaryVerdict)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -438,6 +456,21 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       const trimmed = typeof entry === "string" ? entry : entry.text
       const skipClassification = typeof entry !== "string" && entry.skipClassification
 
+      // 0. Handle pending pipeline re-run decision
+      if (rerunPromptRef.current !== null) {
+        const answer = trimmed.toLowerCase()
+        const pendingPrompt = rerunPromptRef.current
+        rerunPromptRef.current = null
+        setAwaitingRerun(false)
+        if (answer === "y" || answer === "yes") {
+          addMessage("system", null, "Re-running with reviewer feedback...")
+          await executePrompt(pendingPrompt)
+        } else {
+          addMessage("system", null, "Re-run cancelled.")
+        }
+        continue
+      }
+
       // 1. Try slash command
       const slash = parseSlash(trimmed)
       if (slash) {
@@ -476,7 +509,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     }
 
     isProcessing.current = false
-  }, [handleSlashCommand, routerName, executePrompt])
+  }, [handleSlashCommand, routerName, executePrompt, addMessage, setAwaitingRerun])
 
   // --- Input submission --- queues message and kicks off processing
   const handleSubmit = useCallback((value: string) => {
@@ -534,8 +567,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       <Box>
         <Text bold color="green">&gt; </Text>
         <TextInput
-          placeholder="Type a message or /help..."
-          suggestions={SLASH_SUGGESTIONS}
+          placeholder={awaitingRerun ? "Re-run with reviewer feedback? (y/n)" : "Type a message or /help..."}
+          suggestions={awaitingRerun ? [] : SLASH_SUGGESTIONS}
           onSubmit={handleSubmit}
           onChange={setInputValue}
         />

@@ -54,6 +54,36 @@ describe("council mode", () => {
   })
 })
 
+describe("council onAgentComplete callback", () => {
+  it("fires for each agent as it responds", async () => {
+    const completed: string[] = []
+    const runner = new CouncilRunner({
+      router: mock("claude", "synthesis"),
+      adapters: [mock("codex", "codex answer"), mock("gemini", "gemini answer")],
+    })
+    await runner.council("question", [], {
+      onAgentComplete: (resp) => completed.push(resp.agent),
+    })
+    expect(completed).toContain("codex")
+    expect(completed).toContain("gemini")
+    expect(completed).toHaveLength(2)
+  })
+
+  it("fires before synthesis is returned", async () => {
+    const order: string[] = []
+    const runner = new CouncilRunner({
+      router: mock("claude", "synthesis"),
+      adapters: [mock("codex", "codex answer")],
+    })
+    const result = await runner.council("question", [], {
+      onAgentComplete: () => order.push("agent"),
+    })
+    order.push("synthesis")
+    expect(order[0]).toBe("agent")
+    expect(result.synthesis).toBe("synthesis")
+  })
+})
+
 describe("dispatch mode", () => {
   it("router assigns task to one agent", async () => {
     const runner = new CouncilRunner({
@@ -72,6 +102,34 @@ describe("dispatch mode", () => {
     })
     const result = await runner.dispatch("task", [])
     expect(result.agent).toBe("codex")
+  })
+})
+
+describe("dispatch onRouted callback", () => {
+  it("fires with agent name and selected model", async () => {
+    let routedAgent = ""
+    let routedModel: string | undefined
+    const runner = new CouncilRunner({
+      router: mock("claude", JSON.stringify({ assignTo: "codex", model: "codex-mini" })),
+      adapters: [mock("codex", "result")],
+    })
+    await runner.dispatch("task", [], {
+      onRouted: (agent, model) => { routedAgent = agent; routedModel = model },
+    })
+    expect(routedAgent).toBe("codex")
+    expect(routedModel).toBe("codex-mini")
+  })
+
+  it("fires with undefined model when router omits it", async () => {
+    let routedModel: string | undefined = "sentinel"
+    const runner = new CouncilRunner({
+      router: mock("claude", JSON.stringify({ assignTo: "codex" })),
+      adapters: [mock("codex", "result")],
+    })
+    await runner.dispatch("task", [], {
+      onRouted: (_agent, model) => { routedModel = model },
+    })
+    expect(routedModel).toBeUndefined()
   })
 })
 
@@ -103,6 +161,59 @@ describe("modelOverrides in dispatch", () => {
     expect(capturedPrompt).toContain("fast-model")
     expect(capturedPrompt).toContain("other-model")
     expect(capturedPrompt).not.toContain("slow-model")
+  })
+})
+
+describe("pipeline callbacks", () => {
+  it("onRouted fires with executor name and model", async () => {
+    let routedExecutor = ""
+    let routedModel: string | undefined
+    const runner = new CouncilRunner({
+      router: mock("claude", JSON.stringify({ assignTo: "codex", model: "codex-mini" })),
+      adapters: [
+        mock("codex", "the work"),
+        mock("gemini", JSON.stringify({ verdict: "approved", content: "ok" })),
+      ],
+    })
+    await runner.pipeline("task", [], {
+      onRouted: (executor, model) => { routedExecutor = executor; routedModel = model },
+    })
+    expect(routedExecutor).toBe("codex")
+    expect(routedModel).toBe("codex-mini")
+  })
+
+  it("onExecutorComplete fires with executor content before reviews", async () => {
+    const order: string[] = []
+    const runner = new CouncilRunner({
+      router: mock("claude", JSON.stringify({ assignTo: "codex" })),
+      adapters: [
+        mock("codex", "the work"),
+        mock("gemini", JSON.stringify({ verdict: "approved", content: "ok" })),
+      ],
+    })
+    await runner.pipeline("task", [], {
+      onExecutorComplete: (content) => { order.push(`executor:${content}`) },
+      onReviewComplete: (review) => { order.push(`review:${review.reviewer}`) },
+    })
+    expect(order[0]).toBe("executor:the work")
+    expect(order[1]).toBe("review:gemini")
+  })
+
+  it("onReviewComplete fires for each reviewer with verdict and content", async () => {
+    const reviews: { reviewer: string; verdict: string }[] = []
+    const runner = new CouncilRunner({
+      router: mock("claude", JSON.stringify({ assignTo: "codex" })),
+      adapters: [
+        mock("codex", "the work"),
+        mock("gemini", JSON.stringify({ verdict: "changes_requested", content: "needs work" })),
+      ],
+    })
+    await runner.pipeline("task", [], {
+      onReviewComplete: (r) => reviews.push({ reviewer: r.reviewer, verdict: r.verdict }),
+    })
+    expect(reviews).toHaveLength(1)
+    expect(reviews[0].reviewer).toBe("gemini")
+    expect(reviews[0].verdict).toBe("changes_requested")
   })
 })
 

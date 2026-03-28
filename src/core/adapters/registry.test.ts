@@ -5,6 +5,7 @@ import type { AgentAdapter } from "./types"
 const mock = (name: string): AgentAdapter => ({
   name,
   isAvailable: async () => true,
+  getModels: async () => [],
   query: async () => ({ agent: name, content: "", durationMs: 0 }),
 })
 

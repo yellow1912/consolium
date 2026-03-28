@@ -60,12 +60,17 @@ describe("classifyIntent", () => {
     expect(result).toEqual({ type: "command", command: "agents", args: [] })
   })
 
-  it("handles missing args field gracefully", async () => {
+  it("returns command with followup for setup request", async () => {
     const result = await classifyIntent(
-      "list my sessions",
-      makeClassifier('{"type":"command","command":"sessions"}') as any,
+      "setup a debate about whether I should buy an iPhone",
+      makeClassifier('{"type":"command","command":"mode","args":["debate"],"followup":"whether I should buy an iPhone"}') as any,
       mockRegistry as any,
     )
-    expect(result).toEqual({ type: "command", command: "sessions", args: [] })
+    expect(result).toEqual({
+      type: "command",
+      command: "mode",
+      args: ["debate"],
+      followup: "whether I should buy an iPhone",
+    })
   })
 })

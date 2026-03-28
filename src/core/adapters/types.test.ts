@@ -6,6 +6,7 @@ describe("AgentAdapter interface", () => {
     const adapter: AgentAdapter = {
       name: "mock",
       isAvailable: async () => true,
+      getModels: async () => [],
       query: async (prompt) => ({ agent: "mock", content: `echo: ${prompt}`, durationMs: 1 }),
     }
     const result = await adapter.query("hello", [])
@@ -18,6 +19,7 @@ describe("AgentAdapter interface", () => {
     const adapter: AgentAdapter = {
       name: "mock",
       isAvailable: async () => true,
+      getModels: async () => [],
       query: async (_prompt, context) => {
         received.push(...context)
         return { agent: "mock", content: "ok", durationMs: 1 }

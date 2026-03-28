@@ -12,12 +12,32 @@ const { values, positionals } = parseArgs({
     personas: { type: "boolean", default: false },
     version: { type: "boolean", short: "v", default: false },
     workflow: { type: "string", short: "w" },
+    "mcp-config": { type: "boolean", default: false },
   },
   allowPositionals: true,
 })
 
 if (values.version) {
   console.log("consilium v0.1.0")
+  process.exit(0)
+}
+
+if (values["mcp-config"]) {
+  const binPath = Bun.which("consilium") ?? process.argv[1]
+  const config = {
+    mcpServers: {
+      consilium: {
+        command: binPath,
+        args: ["--mcp"],
+        env: {},
+      },
+    },
+  }
+  console.log("\nAdd this to your Claude Desktop config (~/Library/Application Support/Claude/claude_desktop_config.json):\n")
+  console.log(JSON.stringify(config, null, 2))
+  console.log("\nOr for Cursor / other MCP clients, use:\n")
+  console.log(`  command: ${binPath}`)
+  console.log(`  args: ["--mcp"]`)
   process.exit(0)
 }
 

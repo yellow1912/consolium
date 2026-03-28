@@ -22,7 +22,7 @@ export function buildMcpTools(): McpTool[] {
       inputSchema: {
         type: "object",
         properties: {
-          mode: { type: "string", enum: ["council", "dispatch", "pipeline"], description: "Execution mode" },
+          mode: { type: "string", enum: ["council", "dispatch", "pipeline", "debate"], description: "Execution mode" },
           router: { type: "string", description: "Router agent name (default: claude)" },
         },
       },
@@ -108,7 +108,7 @@ async function handleTool(
   registry: ReturnType<typeof buildDefaultRegistry>,
 ): Promise<string> {
   if (name === "start_session") {
-    const mode = (args.mode as "council" | "dispatch" | "pipeline") ?? "dispatch"
+    const mode = (args.mode as "council" | "dispatch" | "pipeline" | "debate") ?? "dispatch"
     const router = (args.router as string) ?? "claude"
     const session = sessionMgr.create({ mode, router })
     return JSON.stringify({ sessionId: session.id, mode: session.mode, router: session.router })
@@ -135,6 +135,9 @@ async function handleTool(
     } else if (session.mode === "dispatch") {
       const r = await runner.dispatch(message, context)
       resultText = r.content
+    } else if (session.mode === "debate") {
+      const r = await runner.debate(message, context)
+      resultText = r.synthesis
     } else {
       const r = await runner.pipeline(message, context)
       resultText = r.taskContent

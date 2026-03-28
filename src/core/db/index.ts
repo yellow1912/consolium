@@ -182,6 +182,10 @@ export class DbStore {
     return this.db.select().from(tasks).where(eq(tasks.id, id)).get() ?? null
   }
 
+  getTasks(sessionId: string) {
+    return this.db.select().from(tasks).where(eq(tasks.sessionId, sessionId)).all()
+  }
+
   getParticipants(sessionId: string) {
     return this.db.select().from(participants).where(eq(participants.sessionId, sessionId)).all()
   }

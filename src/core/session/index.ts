@@ -38,8 +38,20 @@ export class SessionManager {
     return this.db.createTask({ sessionId, content, assignedTo })
   }
 
+  updateTaskStatus(taskId: string, status: "pending" | "running" | "done" | "failed") {
+    return this.db.updateTaskStatus(taskId, status)
+  }
+
+  getTasks(sessionId: string) {
+    return this.db.getTasks(sessionId)
+  }
+
   createReview(taskId: string, reviewer: string, content: string, verdict: "approved" | "changes_requested") {
     return this.db.createReview({ taskId, reviewer, content, verdict })
+  }
+
+  upsertParticipant(sessionId: string, agent: string) {
+    return this.db.upsertParticipant(sessionId, agent)
   }
 
   getAgentSession(masterSessionId: string, agentName: string): string | null {

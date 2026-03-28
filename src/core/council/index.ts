@@ -209,6 +209,38 @@ export class CouncilRunner {
     }
   }
 
+  async reviewContent(
+    taskContent: string,
+    originalPrompt: string,
+    options?: {
+      onReviewComplete?: (review: { reviewer: string; verdict: string; content: string }) => void
+    },
+  ): Promise<{ reviews: { reviewer: string; verdict: string; content: string }[]; approved: boolean }> {
+    const reviewers = this.adapters.filter(a => a.name !== this.router.name)
+    const reviewPrompt = [
+      `Task: "${originalPrompt}"`,
+      `Result:\n${taskContent}`,
+      `Review and respond with JSON only: { "verdict": "approved" | "changes_requested", "content": "<your feedback>" }`,
+    ].join("\n")
+    const reviews = await Promise.all(reviewers.map(async a => {
+      const r = await this.queryAgent(a, reviewPrompt, [], "pipeline")
+      let review: { reviewer: string; verdict: string; content: string }
+      try {
+        const parsed = JSON.parse(r.content)
+        review = {
+          reviewer: a.name,
+          verdict: (parsed.verdict ?? "approved") as string,
+          content: (parsed.content ?? r.content) as string,
+        }
+      } catch {
+        review = { reviewer: a.name, verdict: "approved", content: r.content }
+      }
+      options?.onReviewComplete?.(review)
+      return review
+    }))
+    return { reviews, approved: reviews.every(r => r.verdict === "approved") }
+  }
+
   async debate(
     prompt: string,
     context: Message[],

@@ -29,6 +29,7 @@ const SLASH_SUGGESTIONS = [
   "/sessions",
   "/resume",
   "/history",
+  "/review",
   "/help",
   "/debate",
   "/exit",
@@ -60,6 +61,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
   const [inputValue, setInputValue] = useState("")
   const [awaitingRerun, setAwaitingRerun] = useState(false)
   const rerunPromptRef = useRef<string | null>(null)
+  const rerunCountRef = useRef(0)
+  const MAX_PIPELINE_RERUNS = 3
   type QueueEntry = string | { text: string; skipClassification: boolean }
   const messageQueue = useRef<QueueEntry[]>([])
   const isProcessing = useRef(false)
@@ -136,6 +139,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           setLoadingText(`${agent} is thinking...`)
         },
       })
+      if (result.agent) sessionMgr.current.upsertParticipant(sessionId, result.agent)
       addMessage("agent", result.agent, result.content)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -154,6 +158,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       addMessage("user", null, prompt)
       const result = await runner.council(prompt, contextRef.current, {
         onAgentComplete: (resp) => {
+          if (resp.agent) sessionMgr.current.upsertParticipant(sessionId, resp.agent)
           addMessage("agent", resp.agent, resp.content)
         },
       })
@@ -173,17 +178,31 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setError(null)
     try {
       addMessage("user", null, prompt)
+      rerunCountRef.current = 0
+      let currentTaskId: string | null = null
       const result = await runner.pipeline(prompt, contextRef.current, {
         onRouted: (executor, model) => {
+          const task = sessionMgr.current.createTask(sessionId, prompt, executor)
+          currentTaskId = task.id
+          sessionMgr.current.updateTaskStatus(task.id, "running")
+          sessionMgr.current.upsertParticipant(sessionId, executor)
           const modelInfo = model ? ` (${model})` : ""
           addMessage("system", null, `Router → ${executor}${modelInfo}`)
           setLoadingText(`${executor} is working...`)
         },
         onExecutorComplete: (content) => {
+          if (currentTaskId) sessionMgr.current.updateTaskStatus(currentTaskId, "done")
           addMessage("agent", "pipeline", content)
           setLoadingText("Reviewing...")
         },
         onReviewComplete: (review) => {
+          if (currentTaskId) {
+            sessionMgr.current.createReview(
+              currentTaskId, review.reviewer, review.content,
+              review.verdict as "approved" | "changes_requested",
+            )
+          }
+          sessionMgr.current.upsertParticipant(sessionId, review.reviewer)
           const verdict = review.verdict === "approved" ? "[APPROVED]" : "[CHANGES REQUESTED]"
           addMessage("agent", review.reviewer, `${verdict} ${review.content}`)
         },
@@ -398,6 +417,34 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         break
       }
 
+      case "review": {
+        if (!runner) { setError("No runner available."); return }
+        const msgs = contextRef.current
+        const lastAgent = [...msgs].reverse().find(m => m.role === "agent")
+        if (!lastAgent) { setError("No agent response to review."); return }
+        const lastAgentIdx = msgs.lastIndexOf(lastAgent)
+        const originalPrompt = [...msgs].slice(0, lastAgentIdx).reverse().find(m => m.role === "user")?.content ?? ""
+        setIsLoading(true)
+        setLoadingText("Reviewing last response...")
+        try {
+          addMessage("system", null, "Triggering peer review on last agent response...")
+          const result = await runner.reviewContent(lastAgent.content, originalPrompt, {
+            onReviewComplete: (review) => {
+              sessionMgr.current.upsertParticipant(sessionId, review.reviewer)
+              const verdict = review.verdict === "approved" ? "[APPROVED]" : "[CHANGES REQUESTED]"
+              addMessage("agent", review.reviewer, `${verdict} ${review.content}`)
+            },
+          })
+          addMessage("system", null, result.approved ? "All reviewers approved." : "Some reviewers requested changes.")
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e))
+        } finally {
+          setIsLoading(false)
+          setLoadingText("")
+        }
+        break
+      }
+
       case "debate": {
         const sub = args[0]
         if (sub === "rounds") {
@@ -426,6 +473,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           "  /sessions                                 — browse sessions",
           "  /resume [id]                              — resume a session",
           "  /history                                  — show session history",
+          "  /review                                   — trigger peer review on last response",
           "  /debate rounds <n>                        — set max debate rounds",
           "  /help                                     — show this help",
           "  /exit                                     — quit",
@@ -463,9 +511,16 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         rerunPromptRef.current = null
         setAwaitingRerun(false)
         if (answer === "y" || answer === "yes") {
-          addMessage("system", null, "Re-running with reviewer feedback...")
-          await executePrompt(pendingPrompt)
+          rerunCountRef.current++
+          if (rerunCountRef.current > MAX_PIPELINE_RERUNS) {
+            rerunCountRef.current = 0
+            addMessage("system", null, `Maximum re-run limit (${MAX_PIPELINE_RERUNS}) reached.`)
+          } else {
+            addMessage("system", null, `Re-running with reviewer feedback... (attempt ${rerunCountRef.current}/${MAX_PIPELINE_RERUNS})`)
+            await executePrompt(pendingPrompt)
+          }
         } else {
+          rerunCountRef.current = 0
           addMessage("system", null, "Re-run cancelled.")
         }
         continue

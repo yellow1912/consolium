@@ -22,6 +22,7 @@ export type QueryOptions = {
   model?: string
   agentSessionId?: string
   systemPrompt?: string
+  signal?: AbortSignal
 }
 
 export interface AgentAdapter {

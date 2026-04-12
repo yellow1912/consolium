@@ -87,7 +87,9 @@ export class CouncilRunner {
     mode: string,
     model?: string,
     onToken?: (token: string) => void,
+    signal?: AbortSignal,
   ): Promise<AgentResponse> {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError")
     const agentSessionId = this.getStoredSessionId(agent.name)
     const isResume = agentSessionId !== undefined
     const deltaPrompt = isResume ? this.buildDeltaMessage(prompt, context, agent.name) : prompt
@@ -95,6 +97,7 @@ export class CouncilRunner {
       model,
       agentSessionId,
       systemPrompt: isResume ? undefined : this.buildSystemPrompt(agent.name, mode),
+      signal,
     }
 
     if (onToken && agent.queryStream) {
@@ -133,11 +136,12 @@ export class CouncilRunner {
     onAgentComplete?: (response: AgentResponse) => void
     onAgentError?: (agentName: string, error: Error) => void
     onAgentStream?: (agentName: string, token: string) => void
+    signal?: AbortSignal
   }): Promise<CouncilResult> {
     const respondents = this.adapters.filter(a => a.name !== this.router.name)
     const settled = await Promise.allSettled(respondents.map(async a => {
       const onToken = options?.onAgentStream ? (token: string) => options.onAgentStream!(a.name, token) : undefined
-      const resp = await this.queryAgent(a, prompt, context, "council", undefined, onToken)
+      const resp = await this.queryAgent(a, prompt, context, "council", undefined, onToken, options?.signal)
       options?.onAgentComplete?.(resp)
       return resp
     }))
@@ -164,6 +168,7 @@ export class CouncilRunner {
   async dispatch(prompt: string, context: Message[], options?: {
     onRouted?: (agent: string, model?: string) => void
     onStream?: (token: string) => void
+    signal?: AbortSignal
   }): Promise<AgentResponse> {
     const agentModels = await this.getAgentModelPrompt()
     const routerResp = await this.router.query(
@@ -179,7 +184,7 @@ export class CouncilRunner {
     const agent = this.adapters.find(a => a.name === selection.assignTo) ?? this.adapters[0]
     if (!agent) throw new Error("No agent available for dispatch")
     options?.onRouted?.(agent.name, selection.model)
-    return this.queryAgent(agent, prompt, context, "dispatch", selection.model, options?.onStream)
+    return this.queryAgent(agent, prompt, context, "dispatch", selection.model, options?.onStream, options?.signal)
   }
 
   async pipeline(prompt: string, context: Message[], options?: {
@@ -187,6 +192,7 @@ export class CouncilRunner {
     onExecutorStream?: (token: string) => void
     onExecutorComplete?: (content: string) => void
     onReviewComplete?: (review: { reviewer: string; verdict: string; content: string }) => void
+    signal?: AbortSignal
   }): Promise<PipelineResult> {
     // Router picks executor (routing call — direct, no session tracking)
     const agentModels = await this.getAgentModelPrompt()
@@ -205,7 +211,7 @@ export class CouncilRunner {
     options?.onRouted?.(executor.name, selection.model)
 
     // Executor does the work
-    const taskResp = await this.queryAgent(executor, prompt, context, "pipeline", selection.model, options?.onExecutorStream)
+    const taskResp = await this.queryAgent(executor, prompt, context, "pipeline", selection.model, options?.onExecutorStream, options?.signal)
     options?.onExecutorComplete?.(taskResp.content)
 
     // Peers review (everyone except executor and router)
@@ -304,6 +310,7 @@ export class CouncilRunner {
       onAgentStream?: (agentName: string, token: string) => void
       onAgentComplete?: (agentName: string) => void
       onRoundComplete?: (roundNum: number, responses: DebateRound) => Promise<boolean | undefined>
+      signal?: AbortSignal
     } = {},
   ): Promise<DebateResult> {
     const maxRounds = options.maxRounds ?? 5
@@ -327,6 +334,7 @@ export class CouncilRunner {
           "debate",
           undefined,
           onToken,
+          options.signal,
         )
         options.onAgentComplete?.(a.name)
         return { agent: a.name, content: resp.content }
@@ -359,6 +367,7 @@ export class CouncilRunner {
             "debate",
             undefined,
             onToken,
+            options.signal,
           )
           options.onAgentComplete?.(a.name)
           try {

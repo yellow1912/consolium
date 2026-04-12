@@ -10,20 +10,26 @@ export abstract class SubprocessAdapter implements AgentAdapter {
     return proc.exitCode === 0
   }
 
-  protected async spawnAndRead(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  protected async spawnAndRead(args: string[], signal?: AbortSignal): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const proc = Bun.spawn([this.bin, ...args], { stdout: "pipe", stderr: "pipe" })
-    const [exitCode, stdout, stderr] = await Promise.all([
-      proc.exited,
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ])
-    return { exitCode, stdout, stderr }
+    const onAbort = () => proc.kill()
+    signal?.addEventListener("abort", onAbort, { once: true })
+    try {
+      const [exitCode, stdout, stderr] = await Promise.all([
+        proc.exited,
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ])
+      return { exitCode, stdout, stderr }
+    } finally {
+      signal?.removeEventListener("abort", onAbort)
+    }
   }
 
   async query(prompt: string, context: Message[], options?: QueryOptions): Promise<AgentResponse> {
     const fullPrompt = this.buildContextPrompt(prompt, context)
     const start = Date.now()
-    let { exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(fullPrompt, options))
+    let { exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(fullPrompt, options), options?.signal)
 
     // Heuristic: each CLI uses different wording ("unknown model", "invalid model id", etc.)
     // The broad "model" substring catches all of them. False positives (e.g. rate-limit messages
@@ -48,20 +54,24 @@ export abstract class SubprocessAdapter implements AgentAdapter {
     const fullPrompt = this.buildContextPrompt(prompt, context)
     const args = this.buildArgs(fullPrompt, options)
     const proc = Bun.spawn([this.bin, ...args], { stdout: "pipe", stderr: "pipe" })
+    const onAbort = () => proc.kill()
+    options?.signal?.addEventListener("abort", onAbort, { once: true })
     const reader = proc.stdout.getReader()
     const decoder = new TextDecoder()
     try {
       while (true) {
+        if (options?.signal?.aborted) break
         const { done, value } = await reader.read()
         if (done) break
         yield decoder.decode(value, { stream: true })
       }
-      // Flush any remaining bytes from the decoder
       const remaining = decoder.decode()
-      if (remaining) yield remaining
+      if (remaining && !options?.signal?.aborted) yield remaining
     } finally {
       reader.releaseLock()
+      options?.signal?.removeEventListener("abort", onAbort)
     }
+    if (options?.signal?.aborted) return
     const exitCode = await proc.exited
     if (exitCode !== 0) {
       const stderr = await new Response(proc.stderr).text()

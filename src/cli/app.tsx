@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
-import { Box, Text, useApp } from "ink"
+import { Box, Text, useApp, useInput } from "ink"
 import { TextInput, Spinner } from "@inkjs/ui"
 import type { Mode } from "./types.js"
 import type { Message as MessageData } from "../core/adapters/types.js"
@@ -76,6 +76,15 @@ export default function App({ initialMode = "council", initialRouter = "claude",
   const messageQueue = useRef<QueueEntry[]>([])
   const isProcessing = useRef(false)
   const currentlyProcessingText = useRef<string | null>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  // --- Escape key to cancel current operation ---
+  useInput((_input, key) => {
+    if (key.escape && isProcessing.current) {
+      abortControllerRef.current?.abort()
+      addMessage("system", null, "Cancelled.")
+    }
+  })
 
   // --- Initialize session ---
   useEffect(() => {
@@ -149,9 +158,12 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setIsLoading(true)
     setLoadingText("Routing to agent...")
     setError(null)
+    const ac = new AbortController()
+    abortControllerRef.current = ac
     try {
       let dispatchAgent = ""
       const result = await runner.dispatch(prompt, contextRef.current, {
+        signal: ac.signal,
         onRouted: (agent, model) => {
           dispatchAgent = agent
           const modelInfo = model ? ` (${model})` : ""
@@ -164,8 +176,9 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       if (result.agent) sessionMgr.current.upsertParticipant(sessionId, result.agent)
       addMessage("agent", result.agent, result.content)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (!ac.signal.aborted) setError(e instanceof Error ? e.message : String(e))
     } finally {
+      abortControllerRef.current = null
       setIsLoading(false)
       setLoadingText("")
     }
@@ -176,9 +189,12 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setIsLoading(true)
     setLoadingText("Consulting all agents...")
     setError(null)
+    const ac = new AbortController()
+    abortControllerRef.current = ac
     try {
       addMessage("system", null, "Consulting all agents...")
       const result = await runner.council(prompt, contextRef.current, {
+        signal: ac.signal,
         onAgentStream: (agentName, token) => onStreamToken(agentName, token),
         onAgentComplete: (resp) => {
           clearLiveStream(resp.agent)
@@ -199,8 +215,9 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         addMessage("system", null, `What would you like to do next?\n${lines.join("\n")}\n\nEnter a number or type freely.`)
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (!ac.signal.aborted) setError(e instanceof Error ? e.message : String(e))
     } finally {
+      abortControllerRef.current = null
       setIsLoading(false)
       setLoadingText("")
     }
@@ -211,10 +228,13 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setIsLoading(true)
     setLoadingText("Routing task...")
     setError(null)
+    const ac = new AbortController()
+    abortControllerRef.current = ac
     try {
       rerunCountRef.current = 0
       let currentTaskId: string | null = null
       const result = await runner.pipeline(prompt, contextRef.current, {
+        signal: ac.signal,
         onRouted: (executor, model) => {
           const task = sessionMgr.current.createTask(sessionId, prompt, executor)
           currentTaskId = task.id
@@ -251,8 +271,9 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         addMessage("system", null, "Reviewers requested changes. Re-run with their feedback? (y/n)")
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (!ac.signal.aborted) setError(e instanceof Error ? e.message : String(e))
     } finally {
+      abortControllerRef.current = null
       setIsLoading(false)
       setLoadingText("")
     }
@@ -264,10 +285,13 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setLoadingText("Starting debate...")
     setError(null)
     isDebatingRef.current = true
+    const ac = new AbortController()
+    abortControllerRef.current = ac
     try {
       addMessage("system", null, `Debate started. Agents are forming their initial positions...`)
       const result = await runner.debate(prompt, contextRef.current, {
         maxRounds: debateMaxRounds,
+        signal: ac.signal,
         onRoundStart: (roundNum) => {
           setLoadingText(`Debate round ${roundNum} in progress...`)
         },
@@ -298,8 +322,9 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         addMessage("system", null, `What would you like to do next?\n${lines.join("\n")}\n\nEnter a number or type freely.`)
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (!ac.signal.aborted) setError(e instanceof Error ? e.message : String(e))
     } finally {
+      abortControllerRef.current = null
       isDebatingRef.current = false
       stopDebateRef.current = false
       setIsLoading(false)

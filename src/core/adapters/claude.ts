@@ -48,16 +48,22 @@ export class ClaudeAdapter extends SubprocessAdapter {
     return args
   }
 
-  protected override async spawnAndRead(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  protected override async spawnAndRead(args: string[], signal?: AbortSignal): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const env = { ...process.env }
     delete env.CLAUDECODE
     const proc = Bun.spawn([this.bin, ...args], { stdout: "pipe", stderr: "pipe", env })
-    const [exitCode, stdout, stderr] = await Promise.all([
-      proc.exited,
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ])
-    return { exitCode, stdout, stderr }
+    const onAbort = () => proc.kill()
+    signal?.addEventListener("abort", onAbort, { once: true })
+    try {
+      const [exitCode, stdout, stderr] = await Promise.all([
+        proc.exited,
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ])
+      return { exitCode, stdout, stderr }
+    } finally {
+      signal?.removeEventListener("abort", onAbort)
+    }
   }
 
   override async *queryStream(prompt: string, context: Message[], options?: QueryOptions): AsyncGenerator<string, void, unknown> {
@@ -70,19 +76,24 @@ export class ClaudeAdapter extends SubprocessAdapter {
     const env = { ...process.env }
     delete env.CLAUDECODE
     const proc = Bun.spawn([this.bin, ...args], { stdout: "pipe", stderr: "pipe", env })
+    const onAbort = () => proc.kill()
+    options?.signal?.addEventListener("abort", onAbort, { once: true })
     const reader = proc.stdout.getReader()
     const decoder = new TextDecoder()
     try {
       while (true) {
+        if (options?.signal?.aborted) break
         const { done, value } = await reader.read()
         if (done) break
         yield decoder.decode(value, { stream: true })
       }
       const remaining = decoder.decode()
-      if (remaining) yield remaining
+      if (remaining && !options?.signal?.aborted) yield remaining
     } finally {
       reader.releaseLock()
+      options?.signal?.removeEventListener("abort", onAbort)
     }
+    if (options?.signal?.aborted) return
     const exitCode = await proc.exited
     if (exitCode !== 0) {
       const stderr = await new Response(proc.stderr).text()

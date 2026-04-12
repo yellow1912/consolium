@@ -1,9 +1,10 @@
 import React from "react"
-import { Box, Text } from "ink"
+import { Box, Text, useStdout } from "ink"
 import type { Message as MessageType } from "../../core/adapters/types.js"
 import Message from "./Message.js"
 
-const MAX_VISIBLE = 50
+// Reserve rows for: input line, status bar, spinner, live streams, padding
+const RESERVED_ROWS = 10
 
 type MessageListProps = {
   messages: MessageType[]
@@ -11,6 +12,11 @@ type MessageListProps = {
 }
 
 export default function MessageList({ messages, resumed }: MessageListProps) {
+  const { stdout } = useStdout()
+  const termRows = stdout?.rows ?? 24
+  // Estimate ~3 rows per message (label + content line + margin); min 3 messages always shown
+  const maxVisible = Math.max(3, Math.floor((termRows - RESERVED_ROWS) / 3))
+
   if (messages.length === 0) {
     return (
       <Box marginY={1}>
@@ -23,8 +29,8 @@ export default function MessageList({ messages, resumed }: MessageListProps) {
     )
   }
 
-  const hidden = messages.length > MAX_VISIBLE ? messages.length - MAX_VISIBLE : 0
-  const visible = hidden > 0 ? messages.slice(-MAX_VISIBLE) : messages
+  const hidden = messages.length > maxVisible ? messages.length - maxVisible : 0
+  const visible = hidden > 0 ? messages.slice(-maxVisible) : messages
 
   return (
     <Box flexDirection="column">

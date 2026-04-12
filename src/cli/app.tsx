@@ -148,7 +148,6 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setLoadingText("Routing to agent...")
     setError(null)
     try {
-      addMessage("user", null, prompt)
       let dispatchAgent = ""
       const result = await runner.dispatch(prompt, contextRef.current, {
         onRouted: (agent, model) => {
@@ -176,7 +175,6 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setLoadingText("Consulting all agents...")
     setError(null)
     try {
-      addMessage("user", null, prompt)
       addMessage("system", null, "Consulting all agents...")
       const result = await runner.council(prompt, contextRef.current, {
         onAgentStream: (agentName, token) => onStreamToken(agentName, token),
@@ -205,7 +203,6 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setLoadingText("Routing task...")
     setError(null)
     try {
-      addMessage("user", null, prompt)
       rerunCountRef.current = 0
       let currentTaskId: string | null = null
       const result = await runner.pipeline(prompt, contextRef.current, {
@@ -259,7 +256,6 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setError(null)
     isDebatingRef.current = true
     try {
-      addMessage("user", null, prompt)
       addMessage("system", null, `Debate started. Agents are forming their initial positions...`)
       const result = await runner.debate(prompt, contextRef.current, {
         maxRounds: debateMaxRounds,
@@ -754,6 +750,10 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     const lastEntry = queue.length > 0 ? queue[queue.length - 1] : null
     const lastText = lastEntry ? (typeof lastEntry === "string" ? lastEntry : lastEntry.text) : null
     if (lastText === trimmed) return
+    // Show user message immediately for regular messages (not slash commands, not y/n answers)
+    if (!parseSlash(trimmed) && rerunPromptRef.current === null) {
+      addMessage("user", null, trimmed)
+    }
     queue.push(trimmed)
     processQueue()
   }, [processQueue])

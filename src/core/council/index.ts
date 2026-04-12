@@ -283,6 +283,9 @@ export class CouncilRunner {
     context: Message[],
     options: {
       maxRounds?: number
+      onRoundStart?: (roundNum: number) => void
+      onAgentStream?: (agentName: string, token: string) => void
+      onAgentComplete?: (agentName: string) => void
       onRoundComplete?: (roundNum: number, responses: DebateRound) => Promise<boolean | undefined>
     } = {},
   ): Promise<DebateResult> {
@@ -296,14 +299,19 @@ export class CouncilRunner {
       ).join("\n")
 
     // Round 1: all agents give their initial response (plain text, no pass/fail)
+    options.onRoundStart?.(1)
     const round1 = await Promise.all(
       agents.map(async a => {
+        const onToken = options.onAgentStream ? (token: string) => options.onAgentStream!(a.name, token) : undefined
         const resp = await this.queryAgent(
           a,
           `Debate topic: "${prompt}"\n\nGive your initial position.`,
           context,
           "debate",
+          undefined,
+          onToken,
         )
+        options.onAgentComplete?.(a.name)
         return { agent: a.name, content: resp.content }
       })
     )
@@ -322,15 +330,20 @@ export class CouncilRunner {
 
     // Rounds 2+
     for (let round = 2; round <= maxRounds; round++) {
+      options.onRoundStart?.(round)
       const debateHistory = history()
       const roundResponses = await Promise.all(
         agents.map(async a => {
+          const onToken = options.onAgentStream ? (token: string) => options.onAgentStream!(a.name, token) : undefined
           const resp = await this.queryAgent(
             a,
             `Debate topic: "${prompt}"\n\nDebate so far:\n${debateHistory}\n\nDo you have anything to add or challenge? Respond with JSON only:\n{ "pass": true } if you have nothing new to add\n{ "pass": false, "content": "<your response>" } if you want to speak`,
             [], // debate history is embedded in the prompt string above; user context history is not relevant here
             "debate",
+            undefined,
+            onToken,
           )
+          options.onAgentComplete?.(a.name)
           try {
             const parsed = JSON.parse(resp.content)
             if (parsed.pass === true) return null

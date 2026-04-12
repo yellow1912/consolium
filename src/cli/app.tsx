@@ -177,6 +177,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     setError(null)
     try {
       addMessage("user", null, prompt)
+      addMessage("system", null, "Consulting all agents...")
       const result = await runner.council(prompt, contextRef.current, {
         onAgentStream: (agentName, token) => onStreamToken(agentName, token),
         onAgentComplete: (resp) => {
@@ -259,8 +260,14 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     isDebatingRef.current = true
     try {
       addMessage("user", null, prompt)
+      addMessage("system", null, `Debate started. Agents are forming their initial positions...`)
       const result = await runner.debate(prompt, contextRef.current, {
         maxRounds: debateMaxRounds,
+        onRoundStart: (roundNum) => {
+          setLoadingText(`Debate round ${roundNum} in progress...`)
+        },
+        onAgentStream: (agentName, token) => onStreamToken(agentName, token),
+        onAgentComplete: (agentName) => clearLiveStream(agentName),
         onRoundComplete: async (roundNum, responses) => {
           setLoadingText(`Debate round ${roundNum} complete...`)
           for (const resp of responses) {

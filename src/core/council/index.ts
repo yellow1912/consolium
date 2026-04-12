@@ -278,6 +278,23 @@ export class CouncilRunner {
     return { reviews, approved: reviews.every(r => r.verdict === "approved") }
   }
 
+  async suggestFollowups(
+    synthesis: string,
+    originalPrompt: string,
+    completedMode: string,
+  ): Promise<{ label: string; mode: string; prompt: string }[]> {
+    const resp = await this.router.query(
+      `A "${completedMode}" session just completed.\nOriginal topic: "${originalPrompt}"\nSynthesis: ${synthesis}\n\nSuggest 2-3 natural follow-up actions the user might want to take next.\nAvailable modes: council (multiple perspectives), debate (argue positions), pipeline (build+review), dispatch (single agent task).\n\nRespond with JSON only:\n{ "suggestions": [{ "label": "<short action label>", "mode": "<mode>", "prompt": "<the actual prompt to run>" }] }`,
+      [],
+    )
+    try {
+      const parsed = JSON.parse(resp.content)
+      return Array.isArray(parsed.suggestions) ? parsed.suggestions : []
+    } catch {
+      return []
+    }
+  }
+
   async debate(
     prompt: string,
     context: Message[],

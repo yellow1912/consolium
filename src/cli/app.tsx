@@ -70,10 +70,12 @@ export default function App({ initialMode = "council", initialRouter = "claude",
   const stopDebateRef = useRef(false)
   const isDebatingRef = useRef(false)
   const [awaitingWorkflow, setAwaitingWorkflow] = useState(false)
+  const [followupOptions, setFollowupOptions] = useState<{ label: string; mode: Mode; prompt: string }[] | null>(null)
   const workflowCheckpointRef = useRef<((cont: boolean) => void) | null>(null)
   type QueueEntry = string | { text: string; skipClassification: boolean }
   const messageQueue = useRef<QueueEntry[]>([])
   const isProcessing = useRef(false)
+  const currentlyProcessingText = useRef<string | null>(null)
 
   // --- Initialize session ---
   useEffect(() => {
@@ -189,6 +191,13 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         },
       })
       addMessage("agent", "synthesis", result.synthesis)
+      const suggestions = await runner.suggestFollowups(result.synthesis, prompt, "council")
+      if (suggestions.length > 0) {
+        const opts = suggestions as { label: string; mode: Mode; prompt: string }[]
+        setFollowupOptions(opts)
+        const lines = opts.map((s, i) => `  ${i + 1}. [${s.mode}] ${s.label}`)
+        addMessage("system", null, `What would you like to do next?\n${lines.join("\n")}\n\nEnter a number or type freely.`)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -281,6 +290,13 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         ? `Consensus reached in ${result.roundCount} round(s).`
         : `Debate ended after ${result.roundCount} round(s) without full consensus.`
       addMessage("system", null, status)
+      const suggestions = await runner.suggestFollowups(result.synthesis, prompt, "debate")
+      if (suggestions.length > 0) {
+        const opts = suggestions as { label: string; mode: Mode; prompt: string }[]
+        setFollowupOptions(opts)
+        const lines = opts.map((s, i) => `  ${i + 1}. [${s.mode}] ${s.label}`)
+        addMessage("system", null, `What would you like to do next?\n${lines.join("\n")}\n\nEnter a number or type freely.`)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -718,7 +734,9 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       }
 
       // 3. Execute as message in current mode
+      currentlyProcessingText.current = trimmed
       await executePrompt(trimmed)
+      currentlyProcessingText.current = null
     }
 
     isProcessing.current = false
@@ -729,6 +747,21 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     const trimmed = value.trim()
     if (!trimmed) return
     setInputValue("")
+    // Follow-up option selection
+    if (followupOptions) {
+      const n = parseInt(trimmed, 10)
+      if (!isNaN(n) && n >= 1 && n <= followupOptions.length) {
+        const chosen = followupOptions[n - 1]
+        setFollowupOptions(null)
+        setInputValue("")
+        setMode(chosen.mode)
+        addMessage("system", null, `Switching to ${chosen.mode} mode: ${chosen.label}`)
+        messageQueue.current.push({ text: chosen.prompt, skipClassification: true })
+        processQueue()
+        return
+      }
+      setFollowupOptions(null)
+    }
     // /stop during a debate bypasses the queue — signals the runner directly
     if (trimmed === "/stop" && isDebatingRef.current) {
       stopDebateRef.current = true
@@ -745,7 +778,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       resolve(yes)
       return
     }
-    // Skip if this exact message is already queued (prevents spam from impatient re-submissions)
+    // Skip if this exact message is currently being processed or already queued
+    if (trimmed === currentlyProcessingText.current) return
     const queue = messageQueue.current
     const lastEntry = queue.length > 0 ? queue[queue.length - 1] : null
     const lastText = lastEntry ? (typeof lastEntry === "string" ? lastEntry : lastEntry.text) : null
@@ -804,8 +838,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       <Box>
         <Text bold color="green">&gt; </Text>
         <TextInput
-          placeholder={awaitingRerun ? "Re-run with reviewer feedback? (y/n)" : awaitingWorkflow ? "Continue to next step? (y/n)" : "Type a message or /help..."}
-          suggestions={awaitingRerun || awaitingWorkflow ? [] : SLASH_SUGGESTIONS}
+          placeholder={awaitingRerun ? "Re-run with reviewer feedback? (y/n)" : awaitingWorkflow ? "Continue to next step? (y/n)" : followupOptions ? `Choose 1–${followupOptions.length} or type freely...` : "Type a message or /help..."}
+          suggestions={awaitingRerun || awaitingWorkflow || followupOptions ? [] : SLASH_SUGGESTIONS}
           onSubmit={handleSubmit}
           onChange={setInputValue}
         />

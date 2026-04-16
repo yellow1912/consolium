@@ -58,6 +58,7 @@ export abstract class SubprocessAdapter implements AgentAdapter {
     options?.signal?.addEventListener("abort", onAbort, { once: true })
     const reader = proc.stdout.getReader()
     const decoder = new TextDecoder()
+    let streamError: Error | undefined
     try {
       while (true) {
         if (options?.signal?.aborted) break
@@ -67,14 +68,20 @@ export abstract class SubprocessAdapter implements AgentAdapter {
       }
       const remaining = decoder.decode()
       if (remaining && !options?.signal?.aborted) yield remaining
+    } catch (e) {
+      streamError = e instanceof Error ? e : new Error(String(e))
     } finally {
       reader.releaseLock()
       options?.signal?.removeEventListener("abort", onAbort)
+      // Always kill + reap the process to prevent orphans/zombies
+      try { proc.kill() } catch {}
+      await proc.exited.catch(() => {})
     }
+    if (streamError) throw streamError
     if (options?.signal?.aborted) return
-    const exitCode = await proc.exited
+    const exitCode = await proc.exited.catch(() => -1)
     if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text()
+      const stderr = await new Response(proc.stderr).text().catch(() => "")
       throw new Error(`${this.name} exited with code ${exitCode}: ${stderr}`)
     }
   }

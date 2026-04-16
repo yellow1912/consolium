@@ -192,7 +192,6 @@ export default function App({ initialMode = "council", initialRouter = "claude",
     const ac = new AbortController()
     abortControllerRef.current = ac
     try {
-      addMessage("system", null, "Consulting all agents...")
       const result = await runner.council(prompt, contextRef.current, {
         signal: ac.signal,
         onAgentStream: (agentName, token) => onStreamToken(agentName, token),

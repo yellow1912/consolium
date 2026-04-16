@@ -51,7 +51,7 @@ export class ClaudeAdapter extends SubprocessAdapter {
   protected override async spawnAndRead(args: string[], signal?: AbortSignal): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const env = { ...process.env }
     delete env.CLAUDECODE
-    const proc = Bun.spawn([this.bin, ...args], { stdout: "pipe", stderr: "pipe", env })
+    const proc = Bun.spawn([this.bin, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env })
     const onAbort = () => proc.kill()
     signal?.addEventListener("abort", onAbort, { once: true })
     try {
@@ -75,7 +75,7 @@ export class ClaudeAdapter extends SubprocessAdapter {
     const args = this.buildArgs(effectivePrompt, options)
     const env = { ...process.env }
     delete env.CLAUDECODE
-    const proc = Bun.spawn([this.bin, ...args], { stdout: "pipe", stderr: "pipe", env })
+    const proc = Bun.spawn([this.bin, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env })
     const onAbort = () => proc.kill()
     options?.signal?.addEventListener("abort", onAbort, { once: true })
     const reader = proc.stdout.getReader()

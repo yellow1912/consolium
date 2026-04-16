@@ -11,7 +11,7 @@ export abstract class SubprocessAdapter implements AgentAdapter {
   }
 
   protected async spawnAndRead(args: string[], signal?: AbortSignal): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-    const proc = Bun.spawn([this.bin, ...args], { stdout: "pipe", stderr: "pipe" })
+    const proc = Bun.spawn([this.bin, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" })
     const onAbort = () => proc.kill()
     signal?.addEventListener("abort", onAbort, { once: true })
     try {
@@ -53,7 +53,7 @@ export abstract class SubprocessAdapter implements AgentAdapter {
   async *queryStream(prompt: string, context: Message[], options?: QueryOptions): AsyncGenerator<string, void, unknown> {
     const fullPrompt = this.buildContextPrompt(prompt, context)
     const args = this.buildArgs(fullPrompt, options)
-    const proc = Bun.spawn([this.bin, ...args], { stdout: "pipe", stderr: "pipe" })
+    const proc = Bun.spawn([this.bin, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" })
     const onAbort = () => proc.kill()
     options?.signal?.addEventListener("abort", onAbort, { once: true })
     const reader = proc.stdout.getReader()

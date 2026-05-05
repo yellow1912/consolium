@@ -6,7 +6,7 @@ const { values, positionals } = parseArgs({
   options: {
     mode: { type: "string" },
     router: { type: "string" },
-    resume: { type: "string" },
+    resume: { type: "boolean", default: false },
     list: { type: "boolean", short: "l", default: false },
     mcp: { type: "boolean", default: false },
     personas: { type: "boolean", default: false },
@@ -56,7 +56,7 @@ if (values.list) {
 if (values.workflow) {
   const { loadWorkflow } = await import("./workflows/loader")
   const { WorkflowRunner } = await import("./workflows/runner")
-  const { AdapterRegistry } = await import("./core/adapters/registry")
+  const { buildAutoRegistrySync } = await import("./core/adapters/registry")
 
   const workflow = await loadWorkflow(values.workflow)
   if (!workflow) {
@@ -70,7 +70,7 @@ if (values.workflow) {
     process.exit(1)
   }
 
-  const registry = new AdapterRegistry()
+  const registry = buildAutoRegistrySync()
   const routerName = values.router ?? "claude"
   const runner = new WorkflowRunner(registry, routerName)
 
@@ -99,10 +99,21 @@ if (values.workflow) {
   await startMcpServer()
 } else {
   const { startInkCLI } = await import("./cli/render")
+  let resumeId: string | undefined
+  if (values.resume) {
+    const { SessionManager } = await import("./core/session/index")
+    const mgr = new SessionManager()
+    const all = mgr.listAll()
+    resumeId = all.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.id
+    if (!resumeId) {
+      console.error("No sessions found to resume.")
+      process.exit(1)
+    }
+  }
   await startInkCLI({
     mode: values.mode as "council" | "dispatch" | "pipeline" | "debate" | undefined,
     router: values.router,
-    resumeId: values.resume,
+    resumeId,
     personas: values.personas,
   })
 }

@@ -2,6 +2,9 @@ import type { AgentAdapter } from "./types"
 import { ClaudeAdapter } from "./claude"
 import { CodexAdapter } from "./codex"
 import { GeminiAdapter } from "./gemini"
+import { AGENT_DEFS } from "./defs"
+import { DeclarativeAdapter } from "./declarative"
+import { detectAgents } from "./detect"
 
 export class AdapterRegistry {
   private adapters = new Map<string, AgentAdapter>()
@@ -22,6 +25,10 @@ export class AdapterRegistry {
     const excluded = new Set(names)
     return this.all().filter(a => !excluded.has(a.name))
   }
+
+  names(): string[] {
+    return Array.from(this.adapters.keys())
+  }
 }
 
 export function buildDefaultRegistry(): AdapterRegistry {
@@ -29,6 +36,45 @@ export function buildDefaultRegistry(): AdapterRegistry {
   registry.register(new ClaudeAdapter())
   registry.register(new CodexAdapter())
   registry.register(new GeminiAdapter())
+  return registry
+}
+
+export async function buildAutoRegistry(): Promise<AdapterRegistry> {
+  const registry = new AdapterRegistry()
+
+  const claude = new ClaudeAdapter()
+  if (await claude.isAvailable()) {
+    registry.register(claude)
+  }
+
+  const detected = await detectAgents(
+    AGENT_DEFS.filter(d => d.name !== "claude"),
+  )
+  for (const def of detected) {
+    if (!registry.get(def.name)) {
+      registry.register(new DeclarativeAdapter(def))
+    }
+  }
+
+  return registry
+}
+
+export function buildAutoRegistrySync(): AdapterRegistry {
+  const registry = new AdapterRegistry()
+
+  if (Bun.spawnSync(["which", "claude"]).exitCode === 0) {
+    registry.register(new ClaudeAdapter())
+  }
+
+  for (const def of AGENT_DEFS) {
+    if (def.name === "claude") continue
+    if (Bun.spawnSync(["which", def.bin]).exitCode === 0) {
+      if (!registry.get(def.name)) {
+        registry.register(new DeclarativeAdapter(def))
+      }
+    }
+  }
+
   return registry
 }
 

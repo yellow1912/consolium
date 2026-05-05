@@ -2,7 +2,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { SessionManager } from "../core/session/index"
 import { CouncilRunner } from "../core/council/index"
-import { buildDefaultRegistry } from "../core/adapters/registry"
+import { buildAutoRegistrySync } from "../core/adapters/registry"
 import { loadAllWorkflows, loadWorkflow } from "../workflows/loader"
 import { WorkflowRunner } from "../workflows/runner"
 
@@ -107,7 +107,7 @@ export function buildMcpTools(): McpTool[] {
 
 export async function startMcpServer() {
   const sessionMgr = new SessionManager()
-  const registry = buildDefaultRegistry()
+  const registry = buildAutoRegistrySync()
 
   const server = new Server(
     { name: "consilium", version: "0.1.0" },
@@ -136,7 +136,7 @@ async function handleTool(
   name: string,
   args: Record<string, unknown>,
   sessionMgr: SessionManager,
-  registry: ReturnType<typeof buildDefaultRegistry>,
+  registry: ReturnType<typeof buildAutoRegistrySync>,
 ): Promise<string> {
   if (name === "start_session") {
     const mode = (args.mode as "council" | "dispatch" | "pipeline" | "debate") ?? "dispatch"

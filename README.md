@@ -200,6 +200,9 @@ All agents run via their CLI — no API keys required by Consilium. Each agent m
 | claude | `claude` | [Claude Code](https://claude.ai/code) |
 | codex | `codex` | [OpenAI Codex CLI](https://github.com/openai/codex) |
 | gemini | `gemini` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) |
+| agy | `agy` | [Antigravity CLI](https://github.com/google-deepmind/antigravity-cli) |
+
+Consilium also supports declarative detection and execution for additional CLI agents including: `copilot`, `cursor-agent`, `qwen`, `opencode`, `aider`, `devin`, `hermes`, `kimi`, `kiro`, `vibe`, and `pi`. Available binaries found in your shell's environment PATH will be automatically detected and registered at runtime.
 
 You need at least one agent installed and authenticated. Consilium detects which CLIs are available and skips any that aren't found.
 
@@ -209,7 +212,7 @@ You need at least one agent installed and authenticated. Consilium detects which
 src/
 ├── cli/          — interactive chat loop, slash commands, natural language intent classifier
 ├── core/
-│   ├── adapters/ — Claude/Codex/Gemini adapters + registry
+│   ├── adapters/ — Claude/Codex/Gemini/Agy adapters + context helper + registry
 │   ├── council/  — CouncilRunner (council, dispatch, pipeline, debate)
 │   ├── db/       — SQLite schema + DbStore (WAL mode)
 │   └── session/  — SessionManager + per-agent session store
@@ -220,5 +223,5 @@ State stored at `~/.consilium/consilium.db` (SQLite).
 
 ## References
 
-- [orch](../brainstorming/orch/) — Python prototype this evolved from
+- [orch](https://github.com/yellow1912/consolium/tree/main/brainstorming/orch) — Archival Python prototype this framework evolved from
 - [agents-council](https://github.com/MrLesk/agents-council) — inspiration for MCP + council patterns

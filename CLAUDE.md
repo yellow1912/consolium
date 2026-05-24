@@ -104,3 +104,14 @@ bun --hot ./index.ts
 ```
 
 For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+
+## Custom Adapters & Prompting Guidelines
+
+Consilium manages agent subprocesses using a pluggable adapter hierarchy under `src/core/adapters/`:
+- **First-Class Adapters**: Subclasses of `SubprocessAdapter` (e.g., `ClaudeAdapter`, `CodexAdapter`, `GeminiAdapter`, `AgyAdapter`) registered inside the manual builders in `src/core/adapters/registry.ts`.
+- **Declarative Adapters**: Added as an agent definition inside `AGENT_DEFS` in `src/core/adapters/defs.ts`. These are auto-detected via `which <bin>` and auto-registered at runtime.
+
+### Bounded Context Prompting
+For adapters that do not support native session resumption (`--resume`), Consilium uses a deterministic context helper:
+- **Pruning Boundary**: Enforced via `buildBoundedContextPrompt` in `src/core/adapters/context.ts` (default characters limit `MAX_CONTEXT_CHARS = 16000`, ~4000 tokens).
+- **Behavior**: Chronologically retains recent turns and the latest prompt while automatically pruning older history when limits are exceeded. Pruned segments are marked with: `[... Omitted X older history turns due to context length limits ...]`.

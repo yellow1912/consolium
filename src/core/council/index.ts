@@ -1,13 +1,24 @@
 import type { AgentAdapter, AgentResponse, Message, QueryOptions } from "../adapters/types"
+import { buildBoundedContextPrompt } from "../adapters/context"
+import { extractJson, dispatchSelectionSchema, pipelineReviewSchema } from "./router-utils"
 
 export type CouncilResult = {
   responses: AgentResponse[]
   synthesis: string
 }
 
+export type PipelineReview = {
+  reviewer: string
+  verdict: string
+  content: string
+  metadata?: {
+    fallbackReason?: string
+  }
+}
+
 export type PipelineResult = {
   taskContent: string
-  reviews: { reviewer: string; verdict: string; content: string }[]
+  reviews: PipelineReview[]
   approved: boolean
 }
 
@@ -100,6 +111,24 @@ export class CouncilRunner {
       signal,
     }
 
+    const compiledPrompt = isResume ? deltaPrompt : buildBoundedContextPrompt(prompt, context)
+    const promptChars = compiledPrompt.length
+    const estimatedPromptTokens = Math.ceil(promptChars / 4)
+
+    const populateMetadata = (r: AgentResponse) => {
+      const responseChars = r.content.length
+      const estimatedResponseTokens = Math.ceil(responseChars / 4)
+      r.metadata = {
+        promptChars,
+        responseChars,
+        estimatedPromptTokens,
+        estimatedResponseTokens,
+        selectedModel: model ?? undefined,
+        routedAgent: agent.name,
+        ...r.metadata,
+      }
+    }
+
     if (onToken && agent.queryStream) {
       const start = Date.now()
       const effectiveContext = isResume ? [] : context
@@ -111,6 +140,7 @@ export class CouncilRunner {
       const sessionId = agent.lastSessionId
       const resp: AgentResponse = { agent: agent.name, content: content.trim(), durationMs: Date.now() - start, sessionId }
       if (resp.sessionId) this.saveSessionId(agent.name, resp.sessionId)
+      populateMetadata(resp)
       return resp
     }
 
@@ -118,6 +148,7 @@ export class CouncilRunner {
       ? await agent.query(deltaPrompt, [], options)
       : await agent.query(prompt, context, options)
     if (resp.sessionId) this.saveSessionId(agent.name, resp.sessionId)
+    populateMetadata(resp)
     return resp
   }
 
@@ -176,22 +207,37 @@ export class CouncilRunner {
       context,
     )
     let selection: { assignTo: string, model?: string }
+    let fallbackReason: string | undefined
     try {
-      selection = JSON.parse(routerResp.content)
-    } catch {
+      const parsed = extractJson(routerResp.content)
+      const validated = dispatchSelectionSchema.parse(parsed)
+      const exists = this.adapters.some(a => a.name === validated.assignTo)
+      if (!exists) {
+        throw new Error(`Agent '${validated.assignTo}' not found in active adapters`)
+      }
+      selection = validated
+    } catch (e: any) {
+      fallbackReason = e.message || String(e)
       selection = { assignTo: this.adapters[0]?.name ?? this.router.name }
     }
     const agent = this.adapters.find(a => a.name === selection.assignTo) ?? this.adapters[0]
     if (!agent) throw new Error("No agent available for dispatch")
     options?.onRouted?.(agent.name, selection.model)
-    return this.queryAgent(agent, prompt, context, "dispatch", selection.model, options?.onStream, options?.signal)
+    const resp = await this.queryAgent(agent, prompt, context, "dispatch", selection.model, options?.onStream, options?.signal)
+    if (fallbackReason) {
+      resp.metadata = {
+        ...resp.metadata,
+        fallbackReason,
+      }
+    }
+    return resp
   }
 
   async pipeline(prompt: string, context: Message[], options?: {
     onRouted?: (executor: string, model?: string) => void
     onExecutorStream?: (token: string) => void
     onExecutorComplete?: (content: string) => void
-    onReviewComplete?: (review: { reviewer: string; verdict: string; content: string }) => void
+    onReviewComplete?: (review: PipelineReview) => void
     signal?: AbortSignal
   }): Promise<PipelineResult> {
     // Router picks executor (routing call — direct, no session tracking)
@@ -201,9 +247,17 @@ export class CouncilRunner {
       context,
     )
     let selection: { assignTo: string, model?: string }
+    let fallbackReason: string | undefined
     try {
-      selection = JSON.parse(routerResp.content)
-    } catch {
+      const parsed = extractJson(routerResp.content)
+      const validated = dispatchSelectionSchema.parse(parsed)
+      const exists = this.adapters.some(a => a.name === validated.assignTo)
+      if (!exists) {
+        throw new Error(`Agent '${validated.assignTo}' not found in active adapters`)
+      }
+      selection = validated
+    } catch (e: any) {
+      fallbackReason = e.message || String(e)
       selection = { assignTo: this.adapters[0]?.name ?? this.router.name }
     }
     const executor = this.adapters.find(a => a.name === selection.assignTo) ?? this.adapters[0]
@@ -212,6 +266,12 @@ export class CouncilRunner {
 
     // Executor does the work
     const taskResp = await this.queryAgent(executor, prompt, context, "pipeline", selection.model, options?.onExecutorStream, options?.signal)
+    if (fallbackReason) {
+      taskResp.metadata = {
+        ...taskResp.metadata,
+        fallbackReason,
+      }
+    }
     options?.onExecutorComplete?.(taskResp.content)
 
     // Peers review (everyone except executor and router)
@@ -224,22 +284,32 @@ export class CouncilRunner {
 
     const reviewSettled = await Promise.allSettled(reviewers.map(async a => {
       const r = await this.queryAgent(a, reviewPrompt, [], "pipeline") // reviewers get full task+result in prompt, not from context
-      let review: { reviewer: string; verdict: string; content: string }
+      let review: PipelineReview
+      let reviewFallbackReason: string | undefined
       try {
-        const parsed = JSON.parse(r.content)
+        const parsed = extractJson(r.content)
+        const validated = pipelineReviewSchema.parse(parsed)
         review = {
           reviewer: a.name,
-          verdict: (parsed.verdict ?? "approved") as string,
-          content: (parsed.content ?? r.content) as string,
+          verdict: validated.verdict,
+          content: validated.content,
         }
-      } catch {
-        review = { reviewer: a.name, verdict: "approved", content: r.content }
+      } catch (e: any) {
+        reviewFallbackReason = e.message || String(e)
+        review = {
+          reviewer: a.name,
+          verdict: "approved",
+          content: r.content,
+          metadata: {
+            fallbackReason: reviewFallbackReason,
+          },
+        }
       }
       options?.onReviewComplete?.(review)
       return review
     }))
     const reviews = reviewSettled
-      .filter((r): r is PromiseFulfilledResult<{ reviewer: string; verdict: string; content: string }> => r.status === "fulfilled")
+      .filter((r): r is PromiseFulfilledResult<PipelineReview> => r.status === "fulfilled")
       .map(r => r.value)
 
     return {
@@ -253,9 +323,9 @@ export class CouncilRunner {
     taskContent: string,
     originalPrompt: string,
     options?: {
-      onReviewComplete?: (review: { reviewer: string; verdict: string; content: string }) => void
+      onReviewComplete?: (review: PipelineReview) => void
     },
-  ): Promise<{ reviews: { reviewer: string; verdict: string; content: string }[]; approved: boolean }> {
+  ): Promise<{ reviews: PipelineReview[]; approved: boolean }> {
     const reviewers = this.adapters.filter(a => a.name !== this.router.name)
     const reviewPrompt = [
       `Task: "${originalPrompt}"`,
@@ -264,22 +334,32 @@ export class CouncilRunner {
     ].join("\n")
     const settled = await Promise.allSettled(reviewers.map(async a => {
       const r = await this.queryAgent(a, reviewPrompt, [], "pipeline")
-      let review: { reviewer: string; verdict: string; content: string }
+      let review: PipelineReview
+      let reviewFallbackReason: string | undefined
       try {
-        const parsed = JSON.parse(r.content)
+        const parsed = extractJson(r.content)
+        const validated = pipelineReviewSchema.parse(parsed)
         review = {
           reviewer: a.name,
-          verdict: (parsed.verdict ?? "approved") as string,
-          content: (parsed.content ?? r.content) as string,
+          verdict: validated.verdict,
+          content: validated.content,
         }
-      } catch {
-        review = { reviewer: a.name, verdict: "approved", content: r.content }
+      } catch (e: any) {
+        reviewFallbackReason = e.message || String(e)
+        review = {
+          reviewer: a.name,
+          verdict: "approved",
+          content: r.content,
+          metadata: {
+            fallbackReason: reviewFallbackReason,
+          },
+        }
       }
       options?.onReviewComplete?.(review)
       return review
     }))
     const reviews = settled
-      .filter((r): r is PromiseFulfilledResult<{ reviewer: string; verdict: string; content: string }> => r.status === "fulfilled")
+      .filter((r): r is PromiseFulfilledResult<PipelineReview> => r.status === "fulfilled")
       .map(r => r.value)
     return { reviews, approved: reviews.every(r => r.verdict === "approved") }
   }

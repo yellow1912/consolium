@@ -1,6 +1,7 @@
 import type { AgentDef } from "./defs"
 import type { AgentAdapter, AgentResponse, Message, ModelInfo, QueryOptions } from "./types"
 import { createParser } from "./stream"
+import { buildBoundedContextPrompt } from "./context"
 
 export class DeclarativeAdapter implements AgentAdapter {
   readonly name: string
@@ -57,9 +58,7 @@ export class DeclarativeAdapter implements AgentAdapter {
   }
 
   private buildContextPrompt(prompt: string, context: Message[]): string {
-    if (context.length === 0) return prompt
-    const history = context.map(m => `[${m.agent ?? m.role}]: ${m.content}`).join("\n")
-    return `${history}\n\n[user]: ${prompt}`
+    return buildBoundedContextPrompt(prompt, context)
   }
 
   private buildJsonRpcRequest(prompt: string): string {

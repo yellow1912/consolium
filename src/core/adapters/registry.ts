@@ -2,6 +2,7 @@ import type { AgentAdapter } from "./types"
 import { ClaudeAdapter } from "./claude"
 import { CodexAdapter } from "./codex"
 import { GeminiAdapter } from "./gemini"
+import { AgyAdapter } from "./agy"
 import { AGENT_DEFS } from "./defs"
 import { DeclarativeAdapter } from "./declarative"
 import { detectAgents } from "./detect"
@@ -36,6 +37,7 @@ export function buildDefaultRegistry(): AdapterRegistry {
   registry.register(new ClaudeAdapter())
   registry.register(new CodexAdapter())
   registry.register(new GeminiAdapter())
+  registry.register(new AgyAdapter())
   return registry
 }
 

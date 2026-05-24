@@ -1,7 +1,9 @@
 import { describe, it, expect } from "bun:test"
 import { CodexAdapter } from "./codex"
 import { GeminiAdapter } from "./gemini"
+import { AgyAdapter } from "./agy"
 import { SubprocessAdapter } from "./base"
+import { buildBoundedContextPrompt } from "./context"
 import type { QueryOptions, ModelInfo } from "./types"
 
 describe("CodexAdapter", () => {
@@ -50,6 +52,18 @@ describe("GeminiAdapter", () => {
     const args = new GeminiAdapter("gemini-2.5-pro").buildArgs("my prompt")
     expect(args).toContain("-m")
     expect(args).toContain("gemini-2.5-pro")
+  })
+})
+
+describe("AgyAdapter", () => {
+  it("has correct name", () => { expect(new AgyAdapter().name).toBe("agy") })
+  it("has correct bin", () => { expect(new AgyAdapter().bin).toBe("agy") })
+
+  it("builds args correctly", () => {
+    const args = new AgyAdapter().buildArgs("my prompt")
+    expect(args).toContain("my prompt")
+    expect(args).toContain("-p")
+    expect(args).toContain("--dangerously-skip-permissions")
   })
 })
 
@@ -115,5 +129,51 @@ describe("SubprocessAdapter fallback", () => {
     }
     await expect(adapter.query("hello", [], { model: "bad-model" })).rejects.toThrow("default model also unavailable")
     expect(callCount).toBe(2)
+  })
+})
+
+describe("Bounded Context Prompt Builder", () => {
+  it("returns plain prompt when context is empty", () => {
+    const prompt = "hello world"
+    const result = buildBoundedContextPrompt(prompt, [])
+    expect(result).toBe("hello world")
+  })
+
+  it("builds correct chronological prompt when context fits entirely", () => {
+    const context = [
+      { role: "user" as const, agent: null, content: "First turn" },
+      { role: "agent" as const, agent: "claude", content: "Response one" },
+    ]
+    const result = buildBoundedContextPrompt("Next turn", context)
+    expect(result).toContain("[user]: First turn")
+    expect(result).toContain("[claude]: Response one")
+    expect(result).toContain("[user]: Next turn")
+    expect(result).not.toContain("Omitted")
+  })
+
+  it("truncates older history turns when character boundary is exceeded", () => {
+    const context = [
+      { role: "user" as const, agent: null, content: "This is a very long first turn that will be omitted" },
+      { role: "agent" as const, agent: "gemini", content: "Short recent response" },
+    ]
+    // Bound characters strictly to 100, which will fit only the latest prompt and "Short recent response", omitting the long turn
+    const result = buildBoundedContextPrompt("Next prompt", context, 100)
+    expect(result).toContain("[gemini]: Short recent response")
+    expect(result).toContain("[user]: Next prompt")
+    expect(result).toContain("Omitted 1 older history turns")
+    expect(result).not.toContain("omitted") // "omitted" from the first turn is not there
+  })
+
+  it("truncates all history when even the second turn does not fit", () => {
+    const context = [
+      { role: "user" as const, agent: null, content: "First turn" },
+      { role: "agent" as const, agent: "claude", content: "This is a super long turn that will not fit" },
+    ]
+    // Bound characters strictly to 50, which only fits the next prompt itself
+    const result = buildBoundedContextPrompt("Next prompt", context, 50)
+    expect(result).toContain("[user]: Next prompt")
+    expect(result).toContain("Omitted 2 older history turns")
+    expect(result).not.toContain("First turn")
+    expect(result).not.toContain("super long")
   })
 })

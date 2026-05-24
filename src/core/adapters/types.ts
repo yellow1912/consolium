@@ -4,11 +4,23 @@ export type Message = {
   content: string
 }
 
+export type AgentResponseMetadata = {
+  promptChars?: number
+  responseChars?: number
+  estimatedPromptTokens?: number
+  estimatedResponseTokens?: number
+  selectedModel?: string
+  routedAgent?: string
+  fallbackReason?: string
+  exitCode?: number
+}
+
 export type AgentResponse = {
   agent: string
   content: string
   durationMs: number
   sessionId?: string
+  metadata?: AgentResponseMetadata
 }
 
 export type ModelInfo = {

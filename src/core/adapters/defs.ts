@@ -56,6 +56,18 @@ export const AGENT_DEFS: AgentDef[] = [
     ],
   },
   {
+    name: "agy",
+    bin: "agy",
+    streamFormat: "plain",
+    promptVia: "argv",
+    buildArgs(prompt, _opts) {
+      return ["--dangerously-skip-permissions", "-p", prompt]
+    },
+    fallbackModels: [
+      { id: "agy-default", name: "Antigravity Default", capabilities: ["coding", "reasoning"], isDefault: true },
+    ],
+  },
+  {
     name: "copilot",
     bin: "copilot",
     streamFormat: "copilot-stream-json",

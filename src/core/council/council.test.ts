@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test"
 import { CouncilRunner } from "./index"
+import { buildBoundedContextPrompt } from "../adapters/context"
 import type { AgentAdapter, Message } from "../adapters/types"
 
 function mockAdapter(name: string) {
@@ -102,6 +103,40 @@ describe("dispatch mode", () => {
     })
     const result = await runner.dispatch("task", [])
     expect(result.agent).toBe("codex")
+  })
+
+  it("falls back with metadata if router assigns itself instead of an executable adapter", async () => {
+    const runner = new CouncilRunner({
+      router: mock("claude", JSON.stringify({ assignTo: "claude", model: "router-model" })),
+      adapters: [mock("codex", "fallback response"), mock("gemini", "")],
+    })
+    const result = await runner.dispatch("task", [])
+    expect(result.agent).toBe("codex")
+    expect(result.metadata?.fallbackReason).toContain("Agent 'claude' not found")
+  })
+
+  it("reports telemetry promptChars from the bounded context prompt", async () => {
+    let compiledPrompt = ""
+    const context: Message[] = [
+      { role: "user", agent: null, content: "old ".repeat(10000) },
+      { role: "agent", agent: "gemini", content: "recent response" },
+    ]
+    const codex: AgentAdapter = {
+      name: "codex",
+      isAvailable: async () => true,
+      getModels: async () => [],
+      query: async (prompt, ctx) => {
+        compiledPrompt = buildBoundedContextPrompt(prompt, ctx)
+        return { agent: "codex", content: "ok", durationMs: 1 }
+      },
+    }
+    const runner = new CouncilRunner({
+      router: mock("claude", JSON.stringify({ assignTo: "codex" })),
+      adapters: [codex],
+    })
+    const result = await runner.dispatch("task", context)
+    expect(result.metadata?.promptChars).toBe(compiledPrompt.length)
+    expect(result.metadata?.promptChars).toBeLessThan(16000)
   })
 })
 

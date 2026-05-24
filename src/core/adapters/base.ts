@@ -1,4 +1,5 @@
 import type { AgentAdapter, AgentResponse, Message, ModelInfo, QueryOptions } from "./types"
+import { buildBoundedContextPrompt } from "./context"
 
 export abstract class SubprocessAdapter implements AgentAdapter {
   abstract readonly name: string
@@ -89,8 +90,6 @@ export abstract class SubprocessAdapter implements AgentAdapter {
   abstract getModels(): Promise<ModelInfo[]>
 
   protected buildContextPrompt(prompt: string, context: Message[]): string {
-    if (context.length === 0) return prompt
-    const history = context.map(m => `[${m.agent ?? m.role}]: ${m.content}`).join("\n")
-    return `${history}\n\n[user]: ${prompt}`
+    return buildBoundedContextPrompt(prompt, context)
   }
 }

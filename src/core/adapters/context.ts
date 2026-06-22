@@ -36,3 +36,12 @@ export function buildBoundedContextPrompt(prompt: string, context: Message[], ma
   
   return `${history}${promptPart}`
 }
+
+export function buildCoTPrompt(prompt: string): string {
+  return `${prompt}\n\nThink step by step before answering. Structure your response exactly as:\n[THINKING]\n<your reasoning>\n[ANSWER]\n<your final answer>`
+}
+
+export function extractCoTAnswer(response: string): string {
+  const match = response.match(/\[ANSWER\]\s*([\s\S]+)$/i)
+  return match ? match[1].trim() : response
+}

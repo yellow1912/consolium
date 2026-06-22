@@ -20,6 +20,7 @@ export type PipelineResult = {
   taskContent: string
   reviews: PipelineReview[]
   approved: boolean
+  iterationCount: number
 }
 
 export type DebateRound = { agent: string; content: string }[]
@@ -238,9 +239,14 @@ export class CouncilRunner {
     onExecutorStream?: (token: string) => void
     onExecutorComplete?: (content: string) => void
     onReviewComplete?: (review: PipelineReview) => void
+    onIterationStart?: (iteration: number) => void
+    onIterationComplete?: (iteration: number, approved: boolean) => void
+    maxIterations?: number
     signal?: AbortSignal
   }): Promise<PipelineResult> {
-    // Router picks executor (routing call — direct, no session tracking)
+    const maxIterations = options?.maxIterations ?? 1
+
+    // Router picks executor once (routing call — direct, no session tracking)
     const agentModels = await this.getAgentModelPrompt()
     const routerResp = await this.router.query(
       `Task: "${prompt}"\nAvailable agents & models:\n${agentModels}\nRespond with JSON only: { "assignTo": "<agent name>", "model": "<model id>" }`,
@@ -264,59 +270,69 @@ export class CouncilRunner {
     if (!executor) throw new Error("No executor agent available")
     options?.onRouted?.(executor.name, selection.model)
 
-    // Executor does the work
-    const taskResp = await this.queryAgent(executor, prompt, context, "pipeline", selection.model, options?.onExecutorStream, options?.signal)
-    if (fallbackReason) {
-      taskResp.metadata = {
-        ...taskResp.metadata,
-        fallbackReason,
-      }
-    }
-    options?.onExecutorComplete?.(taskResp.content)
-
-    // Peers review (everyone except executor and router)
     const reviewers = this.adapters.filter(a => a.name !== executor.name && a.name !== this.router.name)
-    const reviewPrompt = [
-      `Task: "${prompt}"`,
-      `Result:\n${taskResp.content}`,
-      `Review and respond with JSON only: { "verdict": "approved" | "changes_requested", "content": "<your feedback>" }`,
-    ].join("\n")
 
-    const reviewSettled = await Promise.allSettled(reviewers.map(async a => {
-      const r = await this.queryAgent(a, reviewPrompt, [], "pipeline") // reviewers get full task+result in prompt, not from context
-      let review: PipelineReview
-      let reviewFallbackReason: string | undefined
-      try {
-        const parsed = extractJson(r.content)
-        const validated = pipelineReviewSchema.parse(parsed)
-        review = {
-          reviewer: a.name,
-          verdict: validated.verdict,
-          content: validated.content,
-        }
-      } catch (e: any) {
-        reviewFallbackReason = e.message || String(e)
-        review = {
-          reviewer: a.name,
-          verdict: "approved",
-          content: r.content,
-          metadata: {
-            fallbackReason: reviewFallbackReason,
-          },
-        }
+    let currentPrompt = prompt
+    let taskContent = ""
+    let reviews: PipelineReview[] = []
+    let approved = false
+
+    for (let iteration = 1; iteration <= maxIterations; iteration++) {
+      options?.onIterationStart?.(iteration)
+
+      // Executor does the work
+      const taskResp = await this.queryAgent(executor, currentPrompt, iteration === 1 ? context : [], "pipeline", selection.model, options?.onExecutorStream, options?.signal)
+      if (iteration === 1 && fallbackReason) {
+        taskResp.metadata = { ...taskResp.metadata, fallbackReason }
       }
-      options?.onReviewComplete?.(review)
-      return review
-    }))
-    const reviews = reviewSettled
-      .filter((r): r is PromiseFulfilledResult<PipelineReview> => r.status === "fulfilled")
-      .map(r => r.value)
+      taskContent = taskResp.content
+      options?.onExecutorComplete?.(taskContent)
 
-    return {
-      taskContent: taskResp.content,
-      reviews,
-      approved: reviews.every(r => r.verdict === "approved"),
+      // Peers review (everyone except executor and router)
+      const reviewPrompt = [
+        `Task: "${prompt}"`,
+        `Result:\n${taskContent}`,
+        `Review and respond with JSON only: { "verdict": "approved" | "changes_requested", "content": "<your feedback>" }`,
+      ].join("\n")
+
+      const reviewSettled = await Promise.allSettled(reviewers.map(async a => {
+        const r = await this.queryAgent(a, reviewPrompt, [], "pipeline")
+        let review: PipelineReview
+        let reviewFallbackReason: string | undefined
+        try {
+          const parsed = extractJson(r.content)
+          const validated = pipelineReviewSchema.parse(parsed)
+          review = { reviewer: a.name, verdict: validated.verdict, content: validated.content }
+        } catch (e: any) {
+          reviewFallbackReason = e.message || String(e)
+          review = { reviewer: a.name, verdict: "approved", content: r.content, metadata: { fallbackReason: reviewFallbackReason } }
+        }
+        options?.onReviewComplete?.(review)
+        return review
+      }))
+      reviews = reviewSettled
+        .filter((r): r is PromiseFulfilledResult<PipelineReview> => r.status === "fulfilled")
+        .map(r => r.value)
+
+      approved = reviews.every(r => r.verdict === "approved")
+      options?.onIterationComplete?.(iteration, approved)
+
+      if (approved || iteration === maxIterations) break
+
+      // Build rewrite prompt from reviewer feedback for next iteration
+      const feedback = reviews
+        .filter(r => r.verdict === "changes_requested")
+        .map(r => `[${r.reviewer}]: ${r.content}`)
+        .join("\n")
+      currentPrompt = [
+        `Original task: "${prompt}"`,
+        `Your previous attempt:\n${taskContent}`,
+        `Reviewer feedback:\n${feedback}`,
+        `Rewrite your answer addressing the feedback above.`,
+      ].join("\n\n")
     }
+
+    return { taskContent, reviews, approved, iterationCount: maxIterations }
   }
 
   async reviewContent(

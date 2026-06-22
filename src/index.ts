@@ -97,18 +97,14 @@ if (values.workflow) {
 } else if (values.mcp) {
   const { startMcpServer } = await import("./mcp/server")
   await startMcpServer()
-} else if (values.mode && positionals.length > 0) {
+} else if (positionals.length > 0) {
   const VALID_MODES = ["council", "dispatch", "pipeline", "debate"] as const
   type Mode = typeof VALID_MODES[number]
-  const mode = values.mode as string
-  if (!VALID_MODES.includes(mode as Mode)) {
-    console.error(`Unknown mode: "${mode}"\nValid modes: ${VALID_MODES.join(", ")}`)
-    process.exit(1)
-  }
 
   const task = positionals.join(" ")
   const { buildAutoRegistrySync } = await import("./core/adapters/registry")
   const { CouncilRunner } = await import("./core/council")
+  const { extractJson } = await import("./core/council/router-utils")
 
   const registry = buildAutoRegistrySync()
   const routerName = values.router ?? "claude"
@@ -120,10 +116,33 @@ if (values.workflow) {
   const adapters = registry.all().filter(a => a.name !== routerName)
   const runner = new CouncilRunner({ router, adapters })
 
+  let mode: Mode
+  if (values.mode) {
+    if (!VALID_MODES.includes(values.mode as Mode)) {
+      console.error(`Unknown mode: "${values.mode}"\nValid modes: ${VALID_MODES.join(", ")}`)
+      process.exit(1)
+    }
+    mode = values.mode as Mode
+  } else {
+    const modeResp = await router.query(
+      `Task: "${task}"\n\nChoose the best execution mode:\n- council: parallel broadcast to all agents + synthesis. Use for open questions, brainstorming, diverse perspectives.\n- dispatch: route to single best agent. Use for focused, single-domain tasks.\n- pipeline: multi-step workflow with agent handoffs. Use for complex tasks needing research → writing → review.\n- debate: agents argue multiple rounds to consensus. Use for decisions, tradeoffs, controversial topics.\n\nRespond with JSON only: { "mode": "council" | "dispatch" | "pipeline" | "debate", "reason": "<one sentence>" }`,
+      [],
+    )
+    try {
+      const parsed = extractJson(modeResp.content)
+      if (!VALID_MODES.includes(parsed.mode)) throw new Error(`invalid mode: ${parsed.mode}`)
+      mode = parsed.mode as Mode
+      process.stderr.write(`Mode: ${mode} — ${parsed.reason}\n`)
+    } catch {
+      mode = "dispatch"
+      process.stderr.write(`Mode: dispatch (auto-select failed, defaulting)\n`)
+    }
+  }
+
   let didStream = false
   const onStream = (token: string) => { didStream = true; process.stdout.write(token) }
 
-  switch (mode as Mode) {
+  switch (mode) {
     case "council": {
       const result = await runner.council(task, [], {
         onAgentComplete: r => process.stderr.write(`[${r.agent}] responded\n`),

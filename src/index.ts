@@ -97,8 +97,8 @@ if (values.workflow) {
 } else if (values.mcp) {
   const { startMcpServer } = await import("./mcp/server")
   await startMcpServer()
-} else if (positionals.length > 0) {
-  const VALID_MODES = ["council", "dispatch", "pipeline", "debate"] as const
+} else if (positionals.length > 0 || values.mode === "review") {
+  const VALID_MODES = ["council", "dispatch", "pipeline", "debate", "review"] as const
   type Mode = typeof VALID_MODES[number]
 
   const task = positionals.join(" ")
@@ -125,7 +125,7 @@ if (values.workflow) {
     mode = values.mode as Mode
   } else {
     const modeResp = await router.query(
-      `Task: "${task}"\n\nChoose the best execution mode:\n- council: parallel broadcast to all agents + synthesis. Use for open questions, brainstorming, diverse perspectives.\n- dispatch: route to single best agent. Use for focused, single-domain tasks.\n- pipeline: multi-step workflow with agent handoffs. Use for complex tasks needing research → writing → review.\n- debate: agents argue multiple rounds to consensus. Use for decisions, tradeoffs, controversial topics.\n\nRespond with JSON only: { "mode": "council" | "dispatch" | "pipeline" | "debate", "reason": "<one sentence>" }`,
+      `Task: "${task}"\n\nChoose the best execution mode:\n- council: parallel broadcast to all agents + synthesis. Use for open questions, brainstorming, diverse perspectives.\n- dispatch: route to single best agent. Use for focused, single-domain tasks.\n- pipeline: multi-step workflow with agent handoffs. Use for complex tasks needing research → writing → review.\n- debate: agents argue multiple rounds to consensus. Use for decisions, tradeoffs, controversial topics.\n- review: parallel angle-based code review (bugs, security, perf, maintainability). Use when given a file path or code to review.\n\nRespond with JSON only: { "mode": "council" | "dispatch" | "pipeline" | "debate" | "review", "reason": "<one sentence>" }`,
       [],
     )
     try {
@@ -173,6 +173,34 @@ if (values.workflow) {
     case "debate": {
       const result = await runner.debate(task, [], {
         onRoundComplete: async (round, responses) => { process.stderr.write(`Round ${round}: ${responses.length} agents\n`) },
+      })
+      console.log(result.synthesis)
+      break
+    }
+    case "review": {
+      let content: string
+      let source: string
+      if (task) {
+        const file = Bun.file(task)
+        if (!(await file.exists())) {
+          console.error(`File not found: ${task}`)
+          process.exit(1)
+        }
+        content = await file.text()
+        source = task
+      } else {
+        const diff = await Bun.$`git diff HEAD`.quiet().text().catch(() => "")
+        const staged = diff.trim() ? diff : await Bun.$`git diff --cached`.quiet().text().catch(() => "")
+        content = staged.trim()
+        if (!content) {
+          console.error("Nothing to review. Pass a file path or stage/modify files.")
+          process.exit(1)
+        }
+        source = "git diff"
+      }
+      process.stderr.write(`Reviewing: ${source}\n`)
+      const result = await runner.review(content, [], {
+        onAngleComplete: f => process.stderr.write(`[${f.angle}] reviewed by ${f.reviewer}\n`),
       })
       console.log(result.synthesis)
       break

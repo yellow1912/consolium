@@ -33,6 +33,17 @@ export type PipelineResult = {
 
 export type DebateRound = { agent: string; content: string }[]
 
+export type ReviewFinding = {
+  angle: string
+  reviewer: string
+  content: string
+}
+
+export type ReviewResult = {
+  findings: ReviewFinding[]
+  synthesis: string
+}
+
 export type DebateResult = {
   rounds: DebateRound[]
   synthesis: string
@@ -582,5 +593,43 @@ export class CouncilRunner {
     ].join("\n")
     const synthesis = await this.router.query(synthesisPrompt, [])
     return { rounds, synthesis: synthesis.content, consensusReached: false, roundCount: maxRounds }
+  }
+
+  async review(content: string, context: Message[], options?: {
+    angles?: string[]
+    onAngleComplete?: (finding: ReviewFinding) => void
+    signal?: AbortSignal
+  }): Promise<ReviewResult> {
+    const angles = options?.angles ?? [
+      "correctness and bugs",
+      "security vulnerabilities",
+      "performance",
+      "maintainability and code quality",
+    ]
+    const reviewers = this.adapters.length > 0 ? this.adapters : [this.router]
+
+    const settled = await Promise.allSettled(angles.map(async (angle, i) => {
+      const reviewer = reviewers[i % reviewers.length]
+      const prompt = `Review the following code for ${angle}. List specific findings with severity (critical/high/medium/low) and line references where applicable. Be concise.\n\n${content}`
+      const resp = await this.queryAgent(reviewer, prompt, [], "review", undefined, undefined, options?.signal)
+      const finding: ReviewFinding = { angle, reviewer: reviewer.name, content: resp.content }
+      options?.onAngleComplete?.(finding)
+      return finding
+    }))
+
+    const findings = settled
+      .filter((r): r is PromiseFulfilledResult<ReviewFinding> => r.status === "fulfilled")
+      .map(r => r.value)
+
+    if (findings.length === 0) throw new Error("All review angles failed")
+
+    const synthesisPrompt = [
+      `Code review findings across ${findings.length} dimensions:`,
+      ...findings.map(f => `[${f.angle}]:\n${f.content}`),
+      `Synthesize into a ranked findings list. Most critical first. Remove duplicates. Include line references where available.`,
+    ].join("\n\n")
+
+    const synthesis = await this.router.query(synthesisPrompt, [])
+    return { findings, synthesis: synthesis.content }
   }
 }

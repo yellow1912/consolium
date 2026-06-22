@@ -16,11 +16,12 @@ export abstract class SubprocessAdapter implements AgentAdapter {
     const onAbort = () => proc.kill()
     signal?.addEventListener("abort", onAbort, { once: true })
     try {
-      const [exitCode, stdout, stderr] = await Promise.all([
+      const [rawExitCode, stdout, stderr] = await Promise.all([
         proc.exited,
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
       ])
+      const exitCode = rawExitCode ?? -1
       return { exitCode, stdout, stderr }
     } finally {
       signal?.removeEventListener("abort", onAbort)
@@ -80,7 +81,7 @@ export abstract class SubprocessAdapter implements AgentAdapter {
     }
     if (streamError) throw streamError
     if (options?.signal?.aborted) return
-    const exitCode = await proc.exited.catch(() => -1)
+    const exitCode = (await proc.exited.catch(() => -1)) ?? -1
     if (exitCode !== 0) {
       const stderr = await new Response(proc.stderr).text().catch(() => "")
       throw new Error(`${this.name} exited with code ${exitCode}: ${stderr}`)

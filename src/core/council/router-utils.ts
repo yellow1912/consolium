@@ -6,12 +6,25 @@ export const dispatchSelectionSchema = z.object({
   subPrompt: z.string().optional(),
 })
 
+export const workflowStepSchema = z.object({
+  agent: z.string(),
+  model: z.string().optional(),
+  subPrompt: z.string(),
+  canSee: z.array(z.number().int().nonnegative()).default([]),
+})
+
+export const workflowPlanSchema = z.object({
+  steps: z.array(workflowStepSchema).min(1).max(5),
+})
+
 export const pipelineReviewSchema = z.object({
   verdict: z.enum(["approved", "changes_requested"]),
   content: z.string(),
 })
 
 export type DispatchSelection = z.infer<typeof dispatchSelectionSchema>
+export type WorkflowStep = z.infer<typeof workflowStepSchema>
+export type WorkflowPlan = z.infer<typeof workflowPlanSchema>
 export type PipelineReviewData = z.infer<typeof pipelineReviewSchema>
 
 /**

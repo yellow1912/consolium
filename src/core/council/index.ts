@@ -1,6 +1,7 @@
 import type { AgentAdapter, AgentResponse, Message, QueryOptions } from "../adapters/types"
 import { buildBoundedContextPrompt } from "../adapters/context"
-import { extractJson, dispatchSelectionSchema, pipelineReviewSchema } from "./router-utils"
+import { extractJson, dispatchSelectionSchema, workflowPlanSchema, pipelineReviewSchema } from "./router-utils"
+import type { WorkflowPlan } from "./router-utils"
 
 export type CouncilResult = {
   responses: AgentResponse[]
@@ -16,11 +17,18 @@ export type PipelineReview = {
   }
 }
 
+export type WorkflowStepResult = {
+  stepIndex: number
+  agent: string
+  content: string
+}
+
 export type PipelineResult = {
   taskContent: string
   reviews: PipelineReview[]
   approved: boolean
   iterationCount: number
+  workflowSteps?: WorkflowStepResult[]
 }
 
 export type DebateRound = { agent: string; content: string }[]
@@ -243,91 +251,141 @@ export class CouncilRunner {
     onReviewComplete?: (review: PipelineReview) => void
     onIterationStart?: (iteration: number) => void
     onIterationComplete?: (iteration: number, approved: boolean) => void
+    onWorkflowPlan?: (plan: WorkflowPlan) => void
+    onStepStart?: (stepIndex: number, total: number, agentName: string) => void
+    onStepComplete?: (result: WorkflowStepResult) => void
     maxIterations?: number
     signal?: AbortSignal
   }): Promise<PipelineResult> {
     const maxIterations = options?.maxIterations ?? 1
 
-    // Router picks executor once (routing call — direct, no session tracking)
+    // Router generates a multi-step workflow plan (planned once, reused across correction iterations)
     const agentModels = await this.getAgentModelPrompt()
     const routerResp = await this.router.query(
-      `Task: "${prompt}"\nAvailable agents & models:\n${agentModels}\nRespond with JSON only: { "assignTo": "<agent name>", "model": "<model id>", "subPrompt": "<tailored prompt optimized for that agent's strengths>" }`,
+      `Task: "${prompt}"\nAvailable agents & models:\n${agentModels}\n\nDesign an agentic workflow of 1–5 steps. For each step specify the agent, a tailored subtask prompt, and which prior step indices this agent may see (canSee: [] = fully isolated). Only include indices in canSee when the agent genuinely needs that prior output.\nRespond with JSON only:\n{ "steps": [{ "agent": "<name>", "model": "<model id>", "subPrompt": "<tailored instructions>", "canSee": [<prior step indices>] }] }`,
       context,
     )
-    let selection: { assignTo: string, model?: string, subPrompt?: string }
-    let fallbackReason: string | undefined
+
+    let plan: WorkflowPlan
+    let planFallbackReason: string | undefined
     try {
       const parsed = extractJson(routerResp.content)
-      const validated = dispatchSelectionSchema.parse(parsed)
-      const exists = this.adapters.some(a => a.name === validated.assignTo)
-      if (!exists) {
-        throw new Error(`Agent '${validated.assignTo}' not found in active adapters`)
+      plan = workflowPlanSchema.parse(parsed)
+      for (const step of plan.steps) {
+        if (!this.adapters.some(a => a.name === step.agent)) {
+          throw new Error(`Agent '${step.agent}' not found in active adapters`)
+        }
       }
-      selection = validated
     } catch (e: any) {
-      fallbackReason = e.message || String(e)
-      selection = { assignTo: this.adapters[0]?.name ?? this.router.name }
+      planFallbackReason = e.message || String(e)
+      const fallback = this.adapters.find(a => a.name !== this.router.name) ?? this.adapters[0]
+      plan = { steps: [{ agent: fallback.name, subPrompt: prompt, canSee: [] }] }
     }
-    const executor = this.adapters.find(a => a.name === selection.assignTo) ?? this.adapters[0]
-    if (!executor) throw new Error("No executor agent available")
-    options?.onRouted?.(executor.name, selection.model)
+    options?.onWorkflowPlan?.(plan)
 
-    const reviewers = this.adapters.filter(a => a.name !== executor.name && a.name !== this.router.name)
+    // Reviewers are adapters not assigned in any workflow step (and not the router)
+    const planAgentNames = new Set(plan.steps.map(s => s.agent))
+    const reviewers = this.adapters.filter(a => a.name !== this.router.name && !planAgentNames.has(a.name))
 
-    let currentPrompt = prompt
     let taskContent = ""
     let reviews: PipelineReview[] = []
     let approved = false
+    let workflowSteps: WorkflowStepResult[] | undefined
+    let rewritePrompt = ""
+    let actualIterations = 0
 
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
+      actualIterations = iteration
       options?.onIterationStart?.(iteration)
 
-      // Executor does the work — context-isolated; on first pass use tailored subPrompt if router provided one
-      const execPrompt = iteration === 1 ? (selection.subPrompt ?? currentPrompt) : currentPrompt
-      const taskResp = await this.queryAgent(executor, execPrompt, [], "pipeline", selection.model, options?.onExecutorStream, options?.signal)
-      if (iteration === 1 && fallbackReason) {
-        taskResp.metadata = { ...taskResp.metadata, fallbackReason }
-      }
-      taskContent = taskResp.content
-      options?.onExecutorComplete?.(taskContent)
+      if (iteration === 1) {
+        // Execute full multi-step workflow with per-step access list isolation
+        const stepResults: WorkflowStepResult[] = []
+        for (let i = 0; i < plan.steps.length; i++) {
+          const step = plan.steps[i]
+          const agent = this.adapters.find(a => a.name === step.agent)
+          if (!agent) continue
+          options?.onStepStart?.(i, plan.steps.length, agent.name)
+          options?.onRouted?.(agent.name, step.model)
 
-      // Peers review (everyone except executor and router)
-      const reviewPrompt = [
-        `Task: "${prompt}"`,
-        `Result:\n${taskContent}`,
-        `Review and respond with JSON only: { "verdict": "approved" | "changes_requested", "content": "<your feedback>" }`,
-      ].join("\n")
+          // Build context strictly from access list indices
+          const allowedContext: Message[] = step.canSee
+            .filter(idx => idx >= 0 && idx < i && stepResults[idx] != null)
+            .map(idx => ({ role: "agent" as const, agent: stepResults[idx].agent, content: stepResults[idx].content }))
 
-      const reviewSettled = await Promise.allSettled(reviewers.map(async a => {
-        const r = await this.queryAgent(a, reviewPrompt, [], "pipeline")
-        let review: PipelineReview
-        let reviewFallbackReason: string | undefined
-        try {
-          const parsed = extractJson(r.content)
-          const validated = pipelineReviewSchema.parse(parsed)
-          review = { reviewer: a.name, verdict: validated.verdict, content: validated.content }
-        } catch (e: any) {
-          reviewFallbackReason = e.message || String(e)
-          review = { reviewer: a.name, verdict: "approved", content: r.content, metadata: { fallbackReason: reviewFallbackReason } }
+          const isLastStep = i === plan.steps.length - 1
+          const onToken = isLastStep ? options?.onExecutorStream : undefined
+          const resp = await this.queryAgent(agent, step.subPrompt, allowedContext, "pipeline", step.model, onToken, options?.signal)
+          if (i === 0 && planFallbackReason) resp.metadata = { ...resp.metadata, fallbackReason: planFallbackReason }
+
+          const result: WorkflowStepResult = { stepIndex: i, agent: agent.name, content: resp.content }
+          stepResults.push(result)
+          options?.onStepComplete?.(result)
         }
-        options?.onReviewComplete?.(review)
-        return review
-      }))
-      reviews = reviewSettled
-        .filter((r): r is PromiseFulfilledResult<PipelineReview> => r.status === "fulfilled")
-        .map(r => r.value)
+        workflowSteps = stepResults
 
-      approved = reviews.every(r => r.verdict === "approved")
+        // Single step: pass through. Multi-step: router synthesizes all outputs.
+        if (stepResults.length === 1) {
+          taskContent = stepResults[0].content
+        } else {
+          const synthesisPrompt = [
+            `Task: "${prompt}"`,
+            `Workflow outputs:`,
+            ...stepResults.map((r, idx) => `[Step ${idx + 1} — ${r.agent}]: ${r.content}`),
+            `Synthesize these into the final answer.`,
+          ].join("\n")
+          taskContent = (await this.router.query(synthesisPrompt, [])).content
+        }
+        options?.onExecutorComplete?.(taskContent)
+      } else {
+        // Correction iteration: last plan step's agent rewrites with reviewer feedback
+        const lastStep = plan.steps[plan.steps.length - 1]
+        const rewriteAgent = this.adapters.find(a => a.name === lastStep.agent)
+          ?? this.adapters.find(a => a.name !== this.router.name)
+        if (!rewriteAgent) throw new Error("No agent available for rewrite")
+        options?.onRouted?.(rewriteAgent.name, lastStep.model)
+        const resp = await this.queryAgent(rewriteAgent, rewritePrompt, [], "pipeline", lastStep.model, options?.onExecutorStream, options?.signal)
+        taskContent = resp.content
+        options?.onExecutorComplete?.(taskContent)
+      }
+
+      // Review phase (reviewers are agents outside the workflow plan)
+      if (reviewers.length > 0) {
+        const reviewPrompt = [
+          `Task: "${prompt}"`,
+          `Result:\n${taskContent}`,
+          `Review and respond with JSON only: { "verdict": "approved" | "changes_requested", "content": "<your feedback>" }`,
+        ].join("\n")
+        const reviewSettled = await Promise.allSettled(reviewers.map(async a => {
+          const r = await this.queryAgent(a, reviewPrompt, [], "pipeline")
+          let review: PipelineReview
+          let reviewFallbackReason: string | undefined
+          try {
+            const parsed = extractJson(r.content)
+            const validated = pipelineReviewSchema.parse(parsed)
+            review = { reviewer: a.name, verdict: validated.verdict, content: validated.content }
+          } catch (e: any) {
+            reviewFallbackReason = e.message || String(e)
+            review = { reviewer: a.name, verdict: "approved", content: r.content, metadata: { fallbackReason: reviewFallbackReason } }
+          }
+          options?.onReviewComplete?.(review)
+          return review
+        }))
+        reviews = reviewSettled
+          .filter((r): r is PromiseFulfilledResult<PipelineReview> => r.status === "fulfilled")
+          .map(r => r.value)
+      }
+
+      approved = reviews.length === 0 || reviews.every(r => r.verdict === "approved")
       options?.onIterationComplete?.(iteration, approved)
-
       if (approved || iteration === maxIterations) break
 
-      // Build rewrite prompt from reviewer feedback for next iteration
+      // Build rewrite prompt for correction iteration
       const feedback = reviews
         .filter(r => r.verdict === "changes_requested")
         .map(r => `[${r.reviewer}]: ${r.content}`)
         .join("\n")
-      currentPrompt = [
+      rewritePrompt = [
         `Original task: "${prompt}"`,
         `Your previous attempt:\n${taskContent}`,
         `Reviewer feedback:\n${feedback}`,
@@ -335,7 +393,7 @@ export class CouncilRunner {
       ].join("\n\n")
     }
 
-    return { taskContent, reviews, approved, iterationCount: maxIterations }
+    return { taskContent, reviews, approved, iterationCount: actualIterations, workflowSteps }
   }
 
   async reviewContent(

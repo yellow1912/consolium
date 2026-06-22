@@ -204,7 +204,7 @@ describe("pipeline callbacks", () => {
     let routedExecutor = ""
     let routedModel: string | undefined
     const runner = new CouncilRunner({
-      router: mock("claude", JSON.stringify({ assignTo: "codex", model: "codex-mini" })),
+      router: mock("claude", JSON.stringify({ steps: [{ agent: "codex", model: "codex-mini", subPrompt: "task", canSee: [] }] })),
       adapters: [
         mock("codex", "the work"),
         mock("gemini", JSON.stringify({ verdict: "approved", content: "ok" })),
@@ -220,7 +220,7 @@ describe("pipeline callbacks", () => {
   it("onExecutorComplete fires with executor content before reviews", async () => {
     const order: string[] = []
     const runner = new CouncilRunner({
-      router: mock("claude", JSON.stringify({ assignTo: "codex" })),
+      router: mock("claude", JSON.stringify({ steps: [{ agent: "codex", subPrompt: "task", canSee: [] }] })),
       adapters: [
         mock("codex", "the work"),
         mock("gemini", JSON.stringify({ verdict: "approved", content: "ok" })),
@@ -237,7 +237,7 @@ describe("pipeline callbacks", () => {
   it("onReviewComplete fires for each reviewer with verdict and content", async () => {
     const reviews: { reviewer: string; verdict: string }[] = []
     const runner = new CouncilRunner({
-      router: mock("claude", JSON.stringify({ assignTo: "codex" })),
+      router: mock("claude", JSON.stringify({ steps: [{ agent: "codex", subPrompt: "task", canSee: [] }] })),
       adapters: [
         mock("codex", "the work"),
         mock("gemini", JSON.stringify({ verdict: "changes_requested", content: "needs work" })),
@@ -255,7 +255,7 @@ describe("pipeline callbacks", () => {
 describe("pipeline mode", () => {
   it("executes task then peer-reviews", async () => {
     const runner = new CouncilRunner({
-      router: mock("claude", JSON.stringify({ assignTo: "codex" })),
+      router: mock("claude", JSON.stringify({ steps: [{ agent: "codex", subPrompt: "write a function", canSee: [] }] })),
       adapters: [
         mock("codex", "here is my code"),
         mock("gemini", JSON.stringify({ verdict: "approved", content: "looks good" })),
@@ -271,7 +271,7 @@ describe("pipeline mode", () => {
 
   it("approved is false if any reviewer requests changes", async () => {
     const runner = new CouncilRunner({
-      router: mock("claude", JSON.stringify({ assignTo: "codex" })),
+      router: mock("claude", JSON.stringify({ steps: [{ agent: "codex", subPrompt: "write a function", canSee: [] }] })),
       adapters: [
         mock("codex", "draft code"),
         mock("gemini", JSON.stringify({ verdict: "changes_requested", content: "needs work" })),
@@ -381,7 +381,7 @@ describe("pipeline graceful degradation", () => {
       query: async () => { throw new Error("gemini unavailable") },
     }
     const runner = new CouncilRunner({
-      router: mock("claude", JSON.stringify({ assignTo: "codex" })),
+      router: mock("claude", JSON.stringify({ steps: [{ agent: "codex", subPrompt: "task", canSee: [] }] })),
       adapters: [
         mock("codex", "the work"),
         failingReviewer,

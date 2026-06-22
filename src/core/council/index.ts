@@ -173,7 +173,8 @@ export class CouncilRunner {
     const respondents = this.adapters.filter(a => a.name !== this.router.name)
     const settled = await Promise.allSettled(respondents.map(async a => {
       const onToken = options?.onAgentStream ? (token: string) => options.onAgentStream!(a.name, token) : undefined
-      const resp = await this.queryAgent(a, prompt, context, "council", undefined, onToken, options?.signal)
+      // Context isolation: sub-agents reason independently, no shared history
+      const resp = await this.queryAgent(a, prompt, [], "council", undefined, onToken, options?.signal)
       options?.onAgentComplete?.(resp)
       return resp
     }))
@@ -204,10 +205,10 @@ export class CouncilRunner {
   }): Promise<AgentResponse> {
     const agentModels = await this.getAgentModelPrompt()
     const routerResp = await this.router.query(
-      `Task: "${prompt}"\nAvailable agents & models:\n${agentModels}\nRespond with JSON only: { "assignTo": "<agent name>", "model": "<model id>" }`,
+      `Task: "${prompt}"\nAvailable agents & models:\n${agentModels}\nRespond with JSON only: { "assignTo": "<agent name>", "model": "<model id>", "subPrompt": "<tailored prompt optimized for that agent's strengths>" }`,
       context,
     )
-    let selection: { assignTo: string, model?: string }
+    let selection: { assignTo: string, model?: string, subPrompt?: string }
     let fallbackReason: string | undefined
     try {
       const parsed = extractJson(routerResp.content)
@@ -224,7 +225,8 @@ export class CouncilRunner {
     const agent = this.adapters.find(a => a.name === selection.assignTo) ?? this.adapters[0]
     if (!agent) throw new Error("No agent available for dispatch")
     options?.onRouted?.(agent.name, selection.model)
-    const resp = await this.queryAgent(agent, prompt, context, "dispatch", selection.model, options?.onStream, options?.signal)
+    // Context isolation: sub-agent gets tailored prompt only, not full conversation history
+    const resp = await this.queryAgent(agent, selection.subPrompt ?? prompt, [], "dispatch", selection.model, options?.onStream, options?.signal)
     if (fallbackReason) {
       resp.metadata = {
         ...resp.metadata,
@@ -249,10 +251,10 @@ export class CouncilRunner {
     // Router picks executor once (routing call — direct, no session tracking)
     const agentModels = await this.getAgentModelPrompt()
     const routerResp = await this.router.query(
-      `Task: "${prompt}"\nAvailable agents & models:\n${agentModels}\nRespond with JSON only: { "assignTo": "<agent name>", "model": "<model id>" }`,
+      `Task: "${prompt}"\nAvailable agents & models:\n${agentModels}\nRespond with JSON only: { "assignTo": "<agent name>", "model": "<model id>", "subPrompt": "<tailored prompt optimized for that agent's strengths>" }`,
       context,
     )
-    let selection: { assignTo: string, model?: string }
+    let selection: { assignTo: string, model?: string, subPrompt?: string }
     let fallbackReason: string | undefined
     try {
       const parsed = extractJson(routerResp.content)
@@ -280,8 +282,9 @@ export class CouncilRunner {
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
       options?.onIterationStart?.(iteration)
 
-      // Executor does the work
-      const taskResp = await this.queryAgent(executor, currentPrompt, iteration === 1 ? context : [], "pipeline", selection.model, options?.onExecutorStream, options?.signal)
+      // Executor does the work — context-isolated; on first pass use tailored subPrompt if router provided one
+      const execPrompt = iteration === 1 ? (selection.subPrompt ?? currentPrompt) : currentPrompt
+      const taskResp = await this.queryAgent(executor, execPrompt, [], "pipeline", selection.model, options?.onExecutorStream, options?.signal)
       if (iteration === 1 && fallbackReason) {
         taskResp.metadata = { ...taskResp.metadata, fallbackReason }
       }
@@ -426,7 +429,7 @@ export class CouncilRunner {
         const resp = await this.queryAgent(
           a,
           `Debate topic: "${prompt}"\n\nGive your initial position.`,
-          context,
+          [], // context isolation: debate agents reason from the topic only
           "debate",
           undefined,
           onToken,

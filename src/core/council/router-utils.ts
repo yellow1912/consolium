@@ -3,6 +3,7 @@ import { z } from "zod"
 export const dispatchSelectionSchema = z.object({
   assignTo: z.string(),
   model: z.string().optional(),
+  subPrompt: z.string().optional(),
 })
 
 export const pipelineReviewSchema = z.object({

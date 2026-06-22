@@ -49,6 +49,7 @@ export class CouncilRunner {
   private router: AgentAdapter
   private adapters: AgentAdapter[]
   private modelOverrides: Record<string, string[]>
+  private modelCache = new Map<string, string[]>()
   private masterSessionId?: string
   private sessionStore?: AgentSessionStore
 
@@ -163,11 +164,14 @@ export class CouncilRunner {
 
   private async getAgentModelPrompt(): Promise<string> {
     const lines = await Promise.all(this.adapters.map(async a => {
-      const cached = this.modelOverrides[a.name]
-      const modelIds = cached && cached.length > 0
-        ? cached
-        : (await a.getModels()).map(m => m.id)
-      return `- ${a.name}: [${modelIds.join(", ")}]`
+      const overrides = this.modelOverrides[a.name]
+      if (overrides && overrides.length > 0) return `- ${a.name}: [${overrides.join(", ")}]`
+      let ids = this.modelCache.get(a.name)
+      if (!ids) {
+        ids = (await a.getModels()).map(m => m.id)
+        this.modelCache.set(a.name, ids)
+      }
+      return `- ${a.name}: [${ids.join(", ")}]`
     }))
     return lines.join("\n")
   }
@@ -279,13 +283,16 @@ export class CouncilRunner {
     } catch (e: any) {
       planFallbackReason = e.message || String(e)
       const fallback = this.adapters.find(a => a.name !== this.router.name) ?? this.adapters[0]
+      if (!fallback) throw new Error("No executor agent available — adapters list is empty")
       plan = { steps: [{ agent: fallback.name, subPrompt: prompt, canSee: [] }] }
     }
     options?.onWorkflowPlan?.(plan)
 
-    // Reviewers are adapters not assigned in any workflow step (and not the router)
+    // Reviewers are adapters not assigned in any workflow step (and not the router).
+    // Fall back to the router when all non-router agents are consumed by the plan.
     const planAgentNames = new Set(plan.steps.map(s => s.agent))
     const reviewers = this.adapters.filter(a => a.name !== this.router.name && !planAgentNames.has(a.name))
+    const effectiveReviewers = reviewers.length > 0 ? reviewers : [this.router]
 
     let taskContent = ""
     let reviews: PipelineReview[] = []
@@ -341,22 +348,24 @@ export class CouncilRunner {
         // Correction iteration: last plan step's agent rewrites with reviewer feedback
         const lastStep = plan.steps[plan.steps.length - 1]
         const rewriteAgent = this.adapters.find(a => a.name === lastStep.agent)
-          ?? this.adapters.find(a => a.name !== this.router.name)
-        if (!rewriteAgent) throw new Error("No agent available for rewrite")
+        if (!rewriteAgent) throw new Error(`Rewrite agent '${lastStep.agent}' is no longer available in the adapter pool`)
         options?.onRouted?.(rewriteAgent.name, lastStep.model)
         const resp = await this.queryAgent(rewriteAgent, rewritePrompt, [], "pipeline", lastStep.model, options?.onExecutorStream, options?.signal)
         taskContent = resp.content
+        if (workflowSteps) {
+          workflowSteps = [...workflowSteps, { stepIndex: workflowSteps.length, agent: rewriteAgent.name, content: taskContent }]
+        }
         options?.onExecutorComplete?.(taskContent)
       }
 
-      // Review phase (reviewers are agents outside the workflow plan)
-      if (reviewers.length > 0) {
+      // Review phase (effectiveReviewers = plan-external agents, or router as fallback)
+      {
         const reviewPrompt = [
           `Task: "${prompt}"`,
           `Result:\n${taskContent}`,
           `Review and respond with JSON only: { "verdict": "approved" | "changes_requested", "content": "<your feedback>" }`,
         ].join("\n")
-        const reviewSettled = await Promise.allSettled(reviewers.map(async a => {
+        const reviewSettled = await Promise.allSettled(effectiveReviewers.map(async a => {
           const r = await this.queryAgent(a, reviewPrompt, [], "pipeline")
           let review: PipelineReview
           let reviewFallbackReason: string | undefined

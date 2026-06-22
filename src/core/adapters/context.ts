@@ -16,7 +16,10 @@ export function buildBoundedContextPrompt(prompt: string, context: Message[], ma
   if (context.length === 0) return prompt
 
   const promptPart = `\n\n[user]: ${prompt}`
-  let remainingChars = maxChars - promptPart.length
+  // Reserve space for the omitted-turns banner (worst case: all turns omitted).
+  // +1 compensates for join("\n") emitting N-1 separators while each turnLen reserves +1.
+  const omittedBannerBudget = `[... Omitted ${context.length} older history turns due to context length limits ...]\n`.length
+  let remainingChars = Math.max(0, maxChars - promptPart.length - omittedBannerBudget + 1)
 
   const turnsToInclude: string[] = []
   let omittedCount = 0
@@ -49,6 +52,7 @@ export function buildCoTPrompt(prompt: string): string {
 }
 
 export function extractCoTAnswer(response: string): string {
-  const match = response.match(/\[ANSWER\]\s*([\s\S]+)$/i)
+  // [\s\S]* is greedy — consumes to the LAST [ANSWER] marker, not the first
+  const match = response.match(/[\s\S]*\[ANSWER\]\s*([\s\S]+)$/i)
   return match ? match[1].trim() : response
 }

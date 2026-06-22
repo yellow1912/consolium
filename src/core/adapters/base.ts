@@ -81,7 +81,7 @@ export abstract class SubprocessAdapter implements AgentAdapter {
     }
     if (streamError) throw streamError
     if (options?.signal?.aborted) return
-    const exitCode = (await proc.exited.catch(() => -1)) ?? -1
+    const exitCode = await proc.exited.catch(() => -1)
     if (exitCode !== 0) {
       const stderr = await new Response(proc.stderr).text().catch(() => "")
       throw new Error(`${this.name} exited with code ${exitCode}: ${stderr}`)

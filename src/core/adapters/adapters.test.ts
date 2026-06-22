@@ -156,8 +156,8 @@ describe("Bounded Context Prompt Builder", () => {
       { role: "user" as const, agent: null, content: "This is a very long first turn that will be omitted" },
       { role: "agent" as const, agent: "gemini", content: "Short recent response" },
     ]
-    // Bound characters strictly to 100, which will fit only the latest prompt and "Short recent response", omitting the long turn
-    const result = buildBoundedContextPrompt("Next prompt", context, 100)
+    // Bound to 130: fits prompt + recent turn + omitted banner but not the long first turn
+    const result = buildBoundedContextPrompt("Next prompt", context, 130)
     expect(result).toContain("[gemini]: Short recent response")
     expect(result).toContain("[user]: Next prompt")
     expect(result).toContain("Omitted 1 older history turns")

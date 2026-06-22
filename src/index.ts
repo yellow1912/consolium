@@ -97,6 +97,68 @@ if (values.workflow) {
 } else if (values.mcp) {
   const { startMcpServer } = await import("./mcp/server")
   await startMcpServer()
+} else if (values.mode && positionals.length > 0) {
+  const VALID_MODES = ["council", "dispatch", "pipeline", "debate"] as const
+  type Mode = typeof VALID_MODES[number]
+  const mode = values.mode as string
+  if (!VALID_MODES.includes(mode as Mode)) {
+    console.error(`Unknown mode: "${mode}"\nValid modes: ${VALID_MODES.join(", ")}`)
+    process.exit(1)
+  }
+
+  const task = positionals.join(" ")
+  const { buildAutoRegistrySync } = await import("./core/adapters/registry")
+  const { CouncilRunner } = await import("./core/council")
+
+  const registry = buildAutoRegistrySync()
+  const routerName = values.router ?? "claude"
+  const router = registry.get(routerName)
+  if (!router) {
+    console.error(`Router "${routerName}" not available. Use --router to specify another agent.`)
+    process.exit(1)
+  }
+  const adapters = registry.all().filter(a => a.name !== routerName)
+  const runner = new CouncilRunner({ router, adapters })
+
+  let didStream = false
+  const onStream = (token: string) => { didStream = true; process.stdout.write(token) }
+
+  switch (mode as Mode) {
+    case "council": {
+      const result = await runner.council(task, [], {
+        onAgentComplete: r => process.stderr.write(`[${r.agent}] responded\n`),
+      })
+      console.log(result.synthesis)
+      break
+    }
+    case "dispatch": {
+      const result = await runner.dispatch(task, [], {
+        onRouted: (agent, model) => process.stderr.write(`→ ${agent}${model ? ` (${model})` : ""}\n`),
+        onStream,
+      })
+      if (didStream) process.stdout.write("\n")
+      else console.log(result.content)
+      break
+    }
+    case "pipeline": {
+      const result = await runner.pipeline(task, [], {
+        onWorkflowPlan: plan => process.stderr.write(`Plan: ${plan.steps.map((s, i) => `[${i + 1}] ${s.agent}`).join(" → ")}\n`),
+        onStepStart: (i, total, agent) => process.stderr.write(`Step ${i + 1}/${total}: ${agent}\n`),
+        onExecutorStream: onStream,
+        maxIterations: 1,
+      })
+      if (didStream) process.stdout.write("\n")
+      else console.log(result.taskContent)
+      break
+    }
+    case "debate": {
+      const result = await runner.debate(task, [], {
+        onRoundComplete: async (round, responses) => { process.stderr.write(`Round ${round}: ${responses.length} agents\n`) },
+      })
+      console.log(result.synthesis)
+      break
+    }
+  }
 } else {
   const { startInkCLI } = await import("./cli/render")
   let resumeId: string | undefined

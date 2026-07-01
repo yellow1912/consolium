@@ -26,6 +26,10 @@ const { values, positionals } = parseArgs({
     wait: { type: "boolean", default: false },
     timeout: { type: "string" },
     name: { type: "string" },
+    // channel subcommand options
+    token: { type: "string" },
+    chat: { type: "string" },
+    agent: { type: "string" },
   },
   allowPositionals: true,
 })
@@ -543,6 +547,76 @@ if (values.workflow) {
     console.error("  send <message> --id <name-or-pid> [--wait] [--timeout <ms>] [--json]")
     console.error("  start <type> [--name <name>]")
     console.error("  open <id>")
+    process.exit(1)
+  }
+} else if (positionals[0] === "channel") {
+  const { ChannelConfigStore } = await import("./core/channel/config-store.js")
+  const sub = positionals[1]
+
+  if (!sub || sub === "list") {
+    const store = new ChannelConfigStore()
+    const channels = store.list()
+    if (channels.length === 0) {
+      console.log("(no channels configured)")
+    } else {
+      for (const ch of channels) {
+        console.log(`  ${ch.name}  type:${ch.type}  agent:${ch.agentId}  chat:${ch.chatId}  created:${ch.createdAt}`)
+      }
+    }
+    process.exit(0)
+  } else if (sub === "connect") {
+    const name = positionals[2]
+    if (!name) {
+      console.error("Usage: consilium channel connect <name> --token <botToken> --chat <chatId> --agent <agentId>")
+      process.exit(1)
+    }
+    const token = values.token
+    const chat = values.chat
+    const agent = values.agent
+    if (!token || !chat || !agent) {
+      console.error("Usage: consilium channel connect <name> --token <botToken> --chat <chatId> --agent <agentId>")
+      process.exit(1)
+    }
+
+    const config = {
+      name,
+      type: "telegram" as const,
+      botToken: token,
+      chatId: chat,
+      agentId: agent,
+      createdAt: new Date().toISOString(),
+    }
+
+    const store = new ChannelConfigStore()
+    await store.save(config)
+    console.log(`Channel "${name}" saved. Starting bridge...`)
+
+    const { runChannelBridge } = await import("./core/channel/channel-runner.js")
+    const ac = new AbortController()
+    const shutdown = () => { ac.abort() }
+    process.on("SIGINT", shutdown)
+    process.on("SIGTERM", shutdown)
+
+    await runChannelBridge(config, ac.signal)
+    process.exit(0)
+  } else if (sub === "disconnect") {
+    const name = positionals[2]
+    if (!name) {
+      console.error("Usage: consilium channel disconnect <name>")
+      process.exit(1)
+    }
+    const store = new ChannelConfigStore()
+    const deleted = await store.delete(name)
+    if (deleted) {
+      console.log(`Channel "${name}" disconnected and config removed.`)
+    } else {
+      console.error(`Channel "${name}" not found.`)
+      process.exit(1)
+    }
+    process.exit(0)
+  } else {
+    console.error(`Unknown channel subcommand: "${sub}"`)
+    console.error("Usage: consilium channel <connect|list|disconnect> [...]")
     process.exit(1)
   }
 } else if (positionals.length > 0 || values.mode === "review") {

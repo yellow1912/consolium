@@ -33,6 +33,7 @@ const SLASH_SUGGESTIONS = [
   "/review",
   "/workflow",
   "/memory",
+  "/send",
   "/stop",
   "/help",
   "/debate",
@@ -751,6 +752,41 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         break
       }
 
+      case "send": {
+        const agentName = args[0]
+        const message = args.slice(1).join(" ")
+        if (!agentName || !message) {
+          setError("Usage: /send <agent-name> <message>")
+          return
+        }
+        setIsLoading(true)
+        setLoadingText(`Sending to ${agentName}...`)
+        try {
+          const { AgentRegistry } = await import("../core/agent-monitor/registry.js")
+          const entries = new AgentRegistry().load()
+          const entry = entries.find(e => e.name === agentName)
+          if (!entry) {
+            addMessage("system", null, `Agent '${agentName}' not found. Run /agents status to see running agents.`)
+            return
+          }
+          const { TtyWriter } = await import("../core/agent-monitor/tty-writer.js")
+          const writer = new TtyWriter()
+          const location = writer.detectTerminal(entry.pid)
+          if (!location) {
+            addMessage("system", null, `No supported terminal detected for '${agentName}'. Supported: tmux, WezTerm, iTerm2, Terminal.app`)
+            return
+          }
+          writer.send(location, message)
+          addMessage("system", null, `Sent to ${agentName} via ${location.type}.`)
+        } catch (e) {
+          addMessage("system", null, `Error sending to ${agentName}: ${e instanceof Error ? e.message : String(e)}`)
+        } finally {
+          setIsLoading(false)
+          setLoadingText("")
+        }
+        break
+      }
+
       case "help": {
         const helpText = [
           "Commands:",
@@ -770,6 +806,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           "  /workflow run <name> <input>              — run a workflow",
           "  /memory search <query>                    — search local memory",
           "  /memory store <title> | <content>         — store entry in local memory",
+          "  /send <agent-name> <message>              — send message to running agent's terminal",
           "  /stop                                     — stop debate after current round",
           "  /debate rounds <n>                        — set max debate rounds",
           "  /help                                     — show this help",

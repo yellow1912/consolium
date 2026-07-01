@@ -109,10 +109,10 @@ export class ClaudeAdapter extends SubprocessAdapter {
       ? prompt
       : this.buildContextPrompt(prompt, context)
     const start = Date.now()
-    let { exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(effectivePrompt, options))
+    let { exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(effectivePrompt, options), options?.signal)
     if (exitCode !== 0 && options?.model && stderr.toLowerCase().includes("model")) {
       console.warn(`[claude] model '${options.model}' rejected, retrying with default`)
-      ;({ exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(effectivePrompt, { ...options, model: undefined })))
+      ;({ exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(effectivePrompt, { ...options, model: undefined }), options?.signal))
     }
     if (exitCode !== 0) throw new Error(`claude exited with code ${exitCode}: ${stderr}`)
     return { agent: this.name, content: stdout.trim(), durationMs: Date.now() - start, sessionId }

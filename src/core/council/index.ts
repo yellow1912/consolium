@@ -230,10 +230,13 @@ export class CouncilRunner {
     signal?: AbortSignal
   }): Promise<CouncilResult> {
     const respondents = this.adapters.filter(a => a.name !== this.router.name)
+    // Prepend text-only instruction so action-oriented agents (hermes, agy, codex) don't
+    // spawn tools or open terminal windows — they should reason and respond in plain text only.
+    const councilPrompt = `IMPORTANT: Respond with text only. Do NOT run any commands, tools, or file operations. Just provide your analysis/opinion.\n\n${prompt}`
     const settled = await Promise.allSettled(respondents.map(async a => {
       const onToken = options?.onAgentStream ? (token: string) => options.onAgentStream!(a.name, token) : undefined
       // Context isolation: sub-agents reason independently, no shared history
-      const resp = await this.queryAgent(a, prompt, [], "council", undefined, onToken, options?.signal)
+      const resp = await this.queryAgent(a, councilPrompt, [], "council", undefined, onToken, options?.signal)
       options?.onAgentComplete?.(resp)
       return resp
     }))
@@ -247,14 +250,39 @@ export class CouncilRunner {
       }
     })
     if (responses.length === 0) throw new Error("All agents failed to respond")
+    const MAX_RESPONSE_CHARS = 6_000
+    const MAX_SYNTHESIS_CHARS = 12_000
+    const responseBlock = responses.map(r => {
+      const content = r.content.length > MAX_RESPONSE_CHARS
+        ? r.content.slice(0, MAX_RESPONSE_CHARS) + "\n[... truncated ...]"
+        : r.content
+      return `[${r.agent}]: ${content}`
+    }).join("\n")
+    const truncated = responseBlock.length > MAX_SYNTHESIS_CHARS
+      ? responseBlock.slice(0, MAX_SYNTHESIS_CHARS) + "\n[... truncated for synthesis ...]"
+      : responseBlock
     const synthesisPrompt = [
       `You asked: "${prompt}"`,
       `Agent responses:`,
-      ...responses.map(r => `[${r.agent}]: ${r.content}`),
+      truncated,
       `Synthesize the best answer.`,
     ].join("\n")
-    const synthesis = await this.router.query(synthesisPrompt, [])
-    return { responses, synthesis: synthesis.content }
+    const fallbackSynthesis = () => responses.map(r => `### ${r.agent}\n${r.content}`).join("\n\n")
+    let synthesis: string
+    const synthesisAc = new AbortController()
+    const timeoutId = setTimeout(() => synthesisAc.abort(), 120_000)
+    if (options?.signal) {
+      options.signal.addEventListener("abort", () => synthesisAc.abort(), { once: true })
+    }
+    try {
+      const synthResp = await this.router.query(synthesisPrompt, [], { signal: synthesisAc.signal })
+      synthesis = synthResp.content
+    } catch {
+      synthesis = fallbackSynthesis()
+    } finally {
+      clearTimeout(timeoutId)
+    }
+    return { responses, synthesis }
   }
 
   async dispatch(prompt: string, context: Message[], options?: {

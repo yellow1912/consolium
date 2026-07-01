@@ -1,6 +1,15 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util"
 
+process.on("uncaughtException", (err) => {
+  process.stderr.write(`[consilium] fatal: ${err?.message ?? err}\n`)
+  process.exit(1)
+})
+process.on("unhandledRejection", (reason) => {
+  process.stderr.write(`[consilium] unhandled rejection: ${reason instanceof Error ? reason.message : String(reason)}\n`)
+  process.exit(1)
+})
+
 const { values, positionals } = parseArgs({
   args: Bun.argv.slice(2),
   options: {
@@ -625,7 +634,11 @@ if (values.workflow) {
     console.error(`Router "${routerName}" not available. Use --router to specify another agent.`)
     process.exit(1)
   }
-  const adapters = registry.all().filter(a => a.name !== routerName)
+  // hermes: ACP JSON-RPC mode opens Terminal.app windows for hook approvals
+  // codex: macOS Gatekeeper may block it and SIGKILL the process group
+  // gemini: IneligibleTierError — free-tier CLI no longer supported
+  const HEADLESS_EXCLUDED = new Set(["hermes", "codex", "gemini"])
+  const adapters = registry.all().filter(a => a.name !== routerName && !HEADLESS_EXCLUDED.has(a.name))
   const runner = new CouncilRunner({ router, adapters })
 
   let mode: Mode
@@ -654,69 +667,75 @@ if (values.workflow) {
   let didStream = false
   const onStream = (token: string) => { didStream = true; process.stdout.write(token) }
 
-  switch (mode) {
-    case "council": {
-      const result = await runner.council(task, [], {
-        onAgentComplete: r => process.stderr.write(`[${r.agent}] responded\n`),
-      })
-      console.log(result.synthesis)
-      break
-    }
-    case "dispatch": {
-      const result = await runner.dispatch(task, [], {
-        onRouted: (agent, model) => process.stderr.write(`→ ${agent}${model ? ` (${model})` : ""}\n`),
-        onStream,
-      })
-      if (didStream) process.stdout.write("\n")
-      else console.log(result.content)
-      break
-    }
-    case "pipeline": {
-      const result = await runner.pipeline(task, [], {
-        onWorkflowPlan: plan => process.stderr.write(`Plan: ${plan.steps.map((s, i) => `[${i + 1}] ${s.agent}`).join(" → ")}\n`),
-        onStepStart: (i, total, agent) => process.stderr.write(`Step ${i + 1}/${total}: ${agent}\n`),
-        onExecutorStream: onStream,
-        maxIterations: 1,
-      })
-      if (didStream) process.stdout.write("\n")
-      else console.log(result.taskContent)
-      break
-    }
-    case "debate": {
-      const result = await runner.debate(task, [], {
-        onRoundComplete: async (round, responses) => { process.stderr.write(`Round ${round}: ${responses.length} agents\n`) },
-      })
-      console.log(result.synthesis)
-      break
-    }
-    case "review": {
-      let content: string
-      let source: string
-      if (task) {
-        const file = Bun.file(task)
-        if (!(await file.exists())) {
-          console.error(`File not found: ${task}`)
-          process.exit(1)
-        }
-        content = await file.text()
-        source = task
-      } else {
-        const diff = await Bun.$`git diff HEAD`.quiet().text().catch(() => "")
-        const staged = diff.trim() ? diff : await Bun.$`git diff --cached`.quiet().text().catch(() => "")
-        content = staged.trim()
-        if (!content) {
-          console.error("Nothing to review. Pass a file path or stage/modify files.")
-          process.exit(1)
-        }
-        source = "git diff"
+  try {
+    switch (mode) {
+      case "council": {
+        const result = await runner.council(task, [], {
+          onAgentComplete: r => process.stderr.write(`[${r.agent}] responded\n`),
+          onAgentError: (name, err) => process.stderr.write(`[${name}] error: ${err.message}\n`),
+        })
+        console.log(result.synthesis)
+        break
       }
-      process.stderr.write(`Reviewing: ${source}\n`)
-      const result = await runner.review(content, [], {
-        onAngleComplete: f => process.stderr.write(`[${f.angle}] reviewed by ${f.reviewer}\n`),
-      })
-      console.log(result.synthesis)
-      break
+      case "dispatch": {
+        const result = await runner.dispatch(task, [], {
+          onRouted: (agent, model) => process.stderr.write(`→ ${agent}${model ? ` (${model})` : ""}\n`),
+          onStream,
+        })
+        if (didStream) process.stdout.write("\n")
+        else console.log(result.content)
+        break
+      }
+      case "pipeline": {
+        const result = await runner.pipeline(task, [], {
+          onWorkflowPlan: plan => process.stderr.write(`Plan: ${plan.steps.map((s, i) => `[${i + 1}] ${s.agent}`).join(" → ")}\n`),
+          onStepStart: (i, total, agent) => process.stderr.write(`Step ${i + 1}/${total}: ${agent}\n`),
+          onExecutorStream: onStream,
+          maxIterations: 1,
+        })
+        if (didStream) process.stdout.write("\n")
+        else console.log(result.taskContent)
+        break
+      }
+      case "debate": {
+        const result = await runner.debate(task, [], {
+          onRoundComplete: async (round, responses) => { process.stderr.write(`Round ${round}: ${responses.length} agents\n`); return undefined },
+        })
+        console.log(result.synthesis)
+        break
+      }
+      case "review": {
+        let content: string
+        let source: string
+        if (task) {
+          const file = Bun.file(task)
+          if (!(await file.exists())) {
+            console.error(`File not found: ${task}`)
+            process.exit(1)
+          }
+          content = await file.text()
+          source = task
+        } else {
+          const diff = await Bun.$`git diff HEAD`.quiet().text().catch(() => "")
+          const staged = diff.trim() ? diff : await Bun.$`git diff --cached`.quiet().text().catch(() => "")
+          content = staged.trim()
+          if (!content) {
+            console.error("Nothing to review. Pass a file path or stage/modify files.")
+            process.exit(1)
+          }
+          source = "git diff"
+        }
+        process.stderr.write(`Reviewing: ${source}\n`)
+        const result = await runner.review(content, [], {
+          onAngleComplete: f => process.stderr.write(`[${f.angle}] reviewed by ${f.reviewer}\n`),
+        })
+        console.log(result.synthesis)
+        break
+      }
     }
+  } catch (e) {
+    console.error(`[${mode}] failed: ${e instanceof Error ? e.message : String(e)}`)
+    process.exit(1)
   }
 } else {
   const { startInkCLI } = await import("./cli/render")

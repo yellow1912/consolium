@@ -21,6 +21,8 @@ const { values, positionals } = parseArgs({
     limit: { type: "string" },
     offset: { type: "string" },
     json: { type: "boolean", default: false },
+    port: { type: "string" },
+    open: { type: "boolean", default: false },
     // agent subcommand options
     id: { type: "string" },
     wait: { type: "boolean", default: false },
@@ -394,12 +396,17 @@ if (values.workflow) {
       console.log(`Recency: today=${r.today}  week=${r.week}  month=${r.month}  older=${r.older}`)
     }
     dbStore.close()
+  } else if (sub === "dashboard") {
+    const { startDashboard } = await import("./core/memory/dashboard/server.js")
+    const port = values.port ? parseInt(values.port, 10) : 4242
+    startDashboard({ port, dbPath, openBrowser: values.open })
   } else {
-    console.error("Usage: consilium memory <search|store|list|summary> [args]")
+    console.error("Usage: consilium memory <search|store|list|summary|dashboard> [args]")
     console.error("  search <query> [--tags t1,t2] [--scope s] [--limit n] [--json]")
     console.error("  store <title> --content <content> [--tags t1,t2] [--scope s]")
     console.error("  list [--scope s] [--tags t1,t2] [--sort title|created|updated|scope] [--limit n] [--offset n] [--json]")
     console.error("  summary [--json]")
+    console.error("  dashboard [--port 4242] [--open]")
     process.exit(1)
   }
 } else if (positionals[0] === "agent") {

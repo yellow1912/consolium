@@ -138,6 +138,9 @@ if (values.workflow) {
         console.log(
           `${String(e.pid).padEnd(8)} ${e.name.padEnd(24)} ${e.type.padEnd(14)} ${status} ${truncate(e.cwd, 41).padEnd(41)} ${lastSeen}`
         )
+        if (e.sessionTitle) {
+          console.log(`${"".padEnd(9)}"${truncate(e.sessionTitle, 80)}"`)
+        }
       }
     }
   } else if (sub === "group") {

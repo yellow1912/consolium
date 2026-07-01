@@ -5,6 +5,12 @@ import type { AgentRegistryEntry } from "./types.js"
 import { ProcessDetector } from "./process-detector.js"
 import { matchAgentsToSessions } from "./matching.js"
 import { parseClaudeSession } from "./claude-session-parser.js"
+import {
+  readCodexSession,
+  readGeminiSession,
+  readOpenCodeSession,
+  type AgentSessionData,
+} from "./session-readers.js"
 
 const REGISTRY_PATH = join(homedir(), ".consilium", "agent-registry.json")
 
@@ -30,6 +36,9 @@ export class AgentRegistry {
     const detected = this.detector.detect()
     const existing = this.load()
     const now = new Date().toISOString()
+
+    // Build a pid → DetectedAgent map for agentType lookup below
+    const detectedMap = new Map(detected.map(d => [d.pid, d]))
 
     // 2. Drop dead entries (pid no longer alive)
     const alive = existing.filter(e => this.detector.isAlive(e.pid))
@@ -69,7 +78,7 @@ export class AgentRegistry {
       if (e.type === "claude") {
         updated.status = this.detector.getClaudeStatus(e.pid)
       }
-      // Re-parse known session file for fresh title and lastActiveAt
+      // Re-parse known Claude JSONL session file for fresh title and lastActiveAt
       if (e.sessionFilePath) {
         try {
           const parsed = await parseClaudeSession(e.sessionFilePath)
@@ -80,6 +89,28 @@ export class AgentRegistry {
         }
       }
       synced.push(updated)
+    }
+
+    // 6. Fill session data for non-Claude agents that don't yet have a title
+    for (const entry of synced) {
+      if (entry.sessionTitle) continue  // already populated by Claude matching
+      const agent = detectedMap.get(entry.pid)
+      if (!agent?.agentType) continue
+
+      let sessionData: AgentSessionData | null = null
+      if (agent.agentType === "codex") {
+        sessionData = await readCodexSession(entry.cwd)
+      } else if (agent.agentType === "gemini") {
+        sessionData = await readGeminiSession(entry.cwd)
+      } else if (agent.agentType === "opencode") {
+        sessionData = await readOpenCodeSession(entry.cwd)
+      }
+
+      if (sessionData) {
+        if (sessionData.title) entry.sessionTitle = sessionData.title
+        if (sessionData.lastActiveAt) entry.lastActiveAt = sessionData.lastActiveAt
+        if (entry.status === "unknown") entry.status = sessionData.status
+      }
     }
 
     this.save(synced)

@@ -6,6 +6,7 @@ export interface DetectedAgent {
   tty: string
   command: string
   bin: string          // matched binary basename
+  agentType?: "claude" | "codex" | "gemini" | "opencode" | "copilot" | "other"
   cwd?: string         // from lsof enrichment
   startedAt?: string   // ISO from ps lstart
 }

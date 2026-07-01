@@ -11,9 +11,24 @@ const KNOWN_BINS = new Set([
 ])
 
 /**
+ * Derive the agent type from the binary name and full command string.
+ * Gemini CLI runs as a Node.js wrapper — if bin is "node" and the command
+ * line references "gemini", we classify it as a Gemini agent.
+ */
+function deriveAgentType(bin: string, command: string): DetectedAgent["agentType"] {
+  if (bin === "claude") return "claude"
+  if (bin === "codex" || bin.includes("codex")) return "codex"
+  if (bin === "gemini" || bin.includes("gemini")) return "gemini"
+  if (bin === "node" && /gemini/i.test(command)) return "gemini"
+  if (bin === "opencode" || bin.includes("open-code")) return "opencode"
+  if (bin === "copilot" || bin.includes("copilot")) return "copilot"
+  return "other"
+}
+
+/**
  * Parse a single line from `ps -axo pid=,ppid=,tty=,command=` output.
  * Returns a DetectedAgent if the first token's basename is in knownBins,
- * otherwise returns null.
+ * or if it is a Node.js process wrapping the Gemini CLI.
  */
 export function parsePsLine(line: string, knownBins: Set<string>): DetectedAgent | null {
   const trimmed = line.trim()
@@ -35,9 +50,11 @@ export function parsePsLine(line: string, knownBins: Set<string>): DetectedAgent
   const execPath = commandParts[0]
   const bin = basename(execPath)
 
-  if (!knownBins.has(bin)) return null
+  // Accept known bins, plus node processes that are wrapping Gemini CLI
+  const isGeminiNodeWrapper = bin === "node" && /gemini/i.test(command)
+  if (!knownBins.has(bin) && !isGeminiNodeWrapper) return null
 
-  return { pid, ppid, tty, command, bin }
+  return { pid, ppid, tty, command, bin, agentType: deriveAgentType(bin, command) }
 }
 
 /**

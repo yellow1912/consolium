@@ -61,4 +61,8 @@ export class SessionManager {
   setAgentSession(masterSessionId: string, agentName: string, agentSessionId: string): void {
     this.db.setAgentSession(masterSessionId, agentName, agentSessionId)
   }
+
+  getStore(): DbStore {
+    return this.db
+  }
 }

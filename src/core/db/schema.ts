@@ -51,3 +51,15 @@ export const agentSessions = sqliteTable("agent_sessions", {
   agentSessionId: text("agent_session_id").notNull(),
   createdAt: text("created_at").notNull(),
 })
+
+export const knowledge = sqliteTable("knowledge", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  tags: text("tags").notNull().default("[]"),           // JSON array string
+  scope: text("scope").notNull().default("global"),     // 'global'|'project:<n>'|'repo:<n>'
+  normalizedTitle: text("normalized_title").notNull(),
+  contentHash: text("content_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+})

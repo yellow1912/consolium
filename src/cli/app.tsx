@@ -32,6 +32,7 @@ const SLASH_SUGGESTIONS = [
   "/history",
   "/review",
   "/workflow",
+  "/memory",
   "/stop",
   "/help",
   "/debate",
@@ -655,6 +656,66 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         break
       }
 
+      case "memory": {
+        const sub = args[0]
+        const { MemoryStore } = await import("../core/memory/index.js")
+        const { DbStore } = await import("../core/db/index.js")
+        const dbPath = `${process.env.HOME}/.consilium/consilium.db`
+        const dbStore = new DbStore(dbPath)
+        const memStore = new MemoryStore(dbStore)
+
+        if (sub === "search") {
+          const query = args.slice(1).join(" ")
+          if (!query) {
+            setError("Usage: /memory search <query>")
+            break
+          }
+          setIsLoading(true)
+          setLoadingText("Searching memory...")
+          try {
+            const results = memStore.searchKnowledge({ query })
+            if (results.length === 0) {
+              addMessage("system", null, "No memory results found.")
+            } else {
+              const lines = results.map((r, i) =>
+                `  ${i + 1}. [${r.scope}] ${r.title}\n     ${r.content.slice(0, 120)}${r.content.length > 120 ? "..." : ""}${r.tags.length > 0 ? `\n     tags: ${r.tags.join(", ")}` : ""}`
+              )
+              addMessage("system", null, `Memory results:\n${lines.join("\n")}`)
+            }
+          } finally {
+            setIsLoading(false)
+            setLoadingText("")
+          }
+          break
+        }
+
+        if (sub === "store") {
+          // /memory store <title> | <content>
+          const rest = args.slice(1).join(" ")
+          const sepIdx = rest.indexOf("|")
+          if (sepIdx === -1) {
+            setError("Usage: /memory store <title> | <content>")
+            break
+          }
+          const title = rest.slice(0, sepIdx).trim()
+          const content = rest.slice(sepIdx + 1).trim()
+          if (!title || !content) {
+            setError("Usage: /memory store <title> | <content>")
+            break
+          }
+          try {
+            const record = memStore.storeKnowledge({ title, content })
+            addMessage("system", null, `Stored: "${record.title}" (id: ${record.id.slice(0, 8)}...)`)
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e))
+          }
+          break
+        }
+
+        setError("Usage: /memory <search <query> | store <title> | <content>>")
+        break
+      }
+
       case "help": {
         const helpText = [
           "Commands:",
@@ -671,6 +732,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           "  /workflow list                            — list available workflows",
           "  /workflow show <name>                     — show workflow steps",
           "  /workflow run <name> <input>              — run a workflow",
+          "  /memory search <query>                    — search local memory",
+          "  /memory store <title> | <content>         — store entry in local memory",
           "  /stop                                     — stop debate after current round",
           "  /debate rounds <n>                        — set max debate rounds",
           "  /help                                     — show this help",

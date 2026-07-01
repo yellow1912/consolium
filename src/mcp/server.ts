@@ -5,6 +5,7 @@ import { CouncilRunner } from "../core/council/index"
 import { buildAutoRegistrySync } from "../core/adapters/registry"
 import { loadAllWorkflows, loadWorkflow } from "../workflows/loader"
 import { WorkflowRunner } from "../workflows/runner"
+import { MemoryStore, type KnowledgeScope, type SearchOptions } from "../core/memory/index"
 
 type McpTool = {
   name: string
@@ -102,12 +103,57 @@ export function buildMcpTools(): McpTool[] {
         required: ["workflow", "input"],
       },
     },
+    {
+      name: "memory_storeKnowledge",
+      description: "Store a knowledge entry in Consilium's local memory",
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Short title (≤100 chars)" },
+          content: { type: "string", description: "Knowledge content (≤5000 chars)" },
+          tags: { type: "array", items: { type: "string" }, description: "Searchable tags" },
+          scope: { type: "string", description: "Scope: 'global', 'project:<name>', or 'repo:<name>'" },
+        },
+        required: ["title", "content"],
+      },
+    },
+    {
+      name: "memory_updateKnowledge",
+      description: "Update an existing knowledge entry by ID",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          title: { type: "string" },
+          content: { type: "string" },
+          tags: { type: "array", items: { type: "string" } },
+          scope: { type: "string" },
+        },
+        required: ["id"],
+      },
+    },
+    {
+      name: "memory_searchKnowledge",
+      description: "Full-text search Consilium's local memory with BM25 ranking",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          tags: { type: "array", items: { type: "string" } },
+          scope: { type: "string" },
+          contextTags: { type: "array", items: { type: "string" } },
+          limit: { type: "number", default: 10 },
+        },
+        required: ["query"],
+      },
+    },
   ]
 }
 
 export async function startMcpServer() {
   const sessionMgr = new SessionManager()
   const registry = buildAutoRegistrySync()
+  const memStore = new MemoryStore(sessionMgr.getStore())
 
   const server = new Server(
     { name: "consilium", version: "0.1.0" },
@@ -121,7 +167,7 @@ export async function startMcpServer() {
   server.setRequestHandler({ method: "tools/call" } as any, async (req: any) => {
     const { name, arguments: args } = req.params
     try {
-      const result = await handleTool(name, args ?? {}, sessionMgr, registry)
+      const result = await handleTool(name, args ?? {}, sessionMgr, registry, memStore)
       return { content: [{ type: "text", text: result }] }
     } catch (err) {
       return { content: [{ type: "text", text: `Error: ${err}` }], isError: true }
@@ -137,6 +183,7 @@ async function handleTool(
   args: Record<string, unknown>,
   sessionMgr: SessionManager,
   registry: ReturnType<typeof buildAutoRegistrySync>,
+  memStore: MemoryStore,
 ): Promise<string> {
   if (name === "start_session") {
     const mode = (args.mode as "council" | "dispatch" | "pipeline" | "debate") ?? "dispatch"
@@ -233,6 +280,37 @@ async function handleTool(
     })
 
     return JSON.stringify({ workflow: workflowName, input, steps, finalContext: context })
+  }
+
+  if (name === "memory_storeKnowledge") {
+    const title = args.title as string
+    const content = args.content as string
+    const tags = (args.tags as string[] | undefined) ?? []
+    const scope = (args.scope as KnowledgeScope | undefined) ?? "global"
+    const record = memStore.storeKnowledge({ title, content, tags, scope })
+    return JSON.stringify(record)
+  }
+
+  if (name === "memory_updateKnowledge") {
+    const id = args.id as string
+    const title = args.title as string | undefined
+    const content = args.content as string | undefined
+    const tags = args.tags as string[] | undefined
+    const scope = args.scope as KnowledgeScope | undefined
+    const record = memStore.updateKnowledge({ id, title, content, tags, scope })
+    return JSON.stringify(record)
+  }
+
+  if (name === "memory_searchKnowledge") {
+    const opts: SearchOptions = {
+      query: args.query as string,
+      tags: args.tags as string[] | undefined,
+      scope: args.scope as KnowledgeScope | undefined,
+      contextTags: args.contextTags as string[] | undefined,
+      limit: typeof args.limit === "number" ? args.limit : 10,
+    }
+    const results = memStore.searchKnowledge(opts)
+    return JSON.stringify(results)
   }
 
   throw new Error(`Unknown tool: ${name}`)

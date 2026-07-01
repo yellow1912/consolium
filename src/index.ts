@@ -13,6 +13,12 @@ const { values, positionals } = parseArgs({
     version: { type: "boolean", short: "v", default: false },
     workflow: { type: "string", short: "w" },
     "mcp-config": { type: "boolean", default: false },
+    // memory subcommand options
+    content: { type: "string" },
+    tags: { type: "string" },
+    scope: { type: "string" },
+    limit: { type: "string" },
+    json: { type: "boolean", default: false },
   },
   allowPositionals: true,
 })
@@ -97,6 +103,62 @@ if (values.workflow) {
 } else if (values.mcp) {
   const { startMcpServer } = await import("./mcp/server")
   await startMcpServer()
+} else if (positionals[0] === "memory") {
+  const sub = positionals[1]
+  const { DbStore } = await import("./core/db/index")
+  const { MemoryStore } = await import("./core/memory/index")
+  const dbPath = `${process.env.HOME}/.consilium/consilium.db`
+  const dbStore = new DbStore(dbPath)
+  const memStore = new MemoryStore(dbStore)
+
+  if (sub === "search") {
+    const query = positionals.slice(2).join(" ")
+    if (!query) {
+      console.error("Usage: consilium memory search <query> [--tags t1,t2] [--scope s] [--limit n] [--json]")
+      process.exit(1)
+    }
+    const tags = values.tags ? values.tags.split(",").map(t => t.trim()).filter(Boolean) : undefined
+    const scope = values.scope as Parameters<typeof memStore.searchKnowledge>[0]["scope"]
+    const limit = values.limit ? parseInt(values.limit, 10) : 10
+    const results = memStore.searchKnowledge({ query, tags, scope, limit })
+    if (values.json) {
+      console.log(JSON.stringify(results, null, 2))
+    } else if (results.length === 0) {
+      console.log("No results found.")
+    } else {
+      results.forEach((r, i) => {
+        console.log(`${i + 1}. [${r.scope}] ${r.title}`)
+        console.log(`   ${r.content.slice(0, 120)}${r.content.length > 120 ? "..." : ""}`)
+        if (r.tags.length > 0) console.log(`   tags: ${r.tags.join(", ")}`)
+        console.log()
+      })
+    }
+    dbStore.close()
+  } else if (sub === "store") {
+    const title = positionals.slice(2).join(" ")
+    if (!title) {
+      console.error("Usage: consilium memory store <title> --content <content> [--tags t1,t2] [--scope s]")
+      process.exit(1)
+    }
+    if (!values.content) {
+      console.error("Error: --content is required for memory store")
+      process.exit(1)
+    }
+    const tags = values.tags ? values.tags.split(",").map(t => t.trim()).filter(Boolean) : []
+    const scope = values.scope as Parameters<typeof memStore.storeKnowledge>[0]["scope"]
+    const record = memStore.storeKnowledge({ title, content: values.content, tags, scope })
+    if (values.json) {
+      console.log(JSON.stringify(record, null, 2))
+    } else {
+      console.log(`Stored: "${record.title}" (id: ${record.id})`)
+    }
+    dbStore.close()
+  } else {
+    console.error("Usage: consilium memory <search|store> [args]")
+    console.error("  search <query> [--tags t1,t2] [--scope s] [--limit n] [--json]")
+    console.error("  store <title> --content <content> [--tags t1,t2] [--scope s]")
+    process.exit(1)
+  }
 } else if (positionals.length > 0 || values.mode === "review") {
   const VALID_MODES = ["council", "dispatch", "pipeline", "debate", "review"] as const
   type Mode = typeof VALID_MODES[number]

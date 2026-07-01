@@ -720,6 +720,19 @@ if (values.workflow) {
   }
 } else {
   const { startInkCLI } = await import("./cli/render")
+
+  // Auto-reconnect all saved channel bridges as background tasks
+  const { ChannelConfigStore } = await import("./core/channel/config-store.js")
+  const { runChannelBridge } = await import("./core/channel/channel-runner.js")
+  const savedChannels = new ChannelConfigStore().list()
+  const bridgeACs: AbortController[] = []
+  for (const ch of savedChannels) {
+    const ac = new AbortController()
+    bridgeACs.push(ac)
+    runChannelBridge(ch, ac.signal).catch(() => {})
+  }
+  process.on("SIGTERM", () => bridgeACs.forEach(ac => ac.abort()))
+
   let resumeId: string | undefined
   if (values.resume) {
     const { SessionManager } = await import("./core/session/index")

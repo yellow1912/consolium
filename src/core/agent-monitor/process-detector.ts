@@ -115,25 +115,38 @@ export class ProcessDetector {
         // lsof unavailable — continue without cwd enrichment
       }
 
-      // 3. Enrich with startedAt via ps lstart
-      for (const agent of detected) {
-        try {
-          const lstartResult = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(agent.pid)], {
-            stdout: "pipe",
-            stderr: "pipe",
-          })
-          if (lstartResult.exitCode === 0) {
-            const raw = new TextDecoder().decode(lstartResult.stdout).trim()
-            if (raw) {
-              const parsed = new Date(raw)
-              if (!isNaN(parsed.getTime())) {
-                agent.startedAt = parsed.toISOString()
+      // 3. Enrich with startedAt via a single batched ps lstart call
+      try {
+        const pidList = detected.map(d => d.pid).join(",")
+        const lstartResult = Bun.spawnSync(["ps", "-o", "pid=,lstart=", "-p", pidList], {
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        if (lstartResult.exitCode === 0 || lstartResult.exitCode === 1) {
+          // ps exits 1 when some PIDs are missing but still emits valid rows
+          const lstartOutput = new TextDecoder().decode(lstartResult.stdout)
+          const pidLstartMap = new Map<number, string>()
+          for (const line of lstartOutput.split("\n")) {
+            const match = line.match(/^\s*(\d+)\s+(.+)$/)
+            if (!match) continue
+            const pid = parseInt(match[1], 10)
+            const lstart = match[2].trim()
+            if (!isNaN(pid) && lstart) pidLstartMap.set(pid, lstart)
+          }
+          for (const agent of detected) {
+            const lstart = pidLstartMap.get(agent.pid)
+            if (lstart) {
+              try {
+                const parsed = new Date(lstart)
+                if (!isNaN(parsed.getTime())) agent.startedAt = parsed.toISOString()
+              } catch {
+                // invalid date — leave startedAt undefined
               }
             }
           }
-        } catch {
-          // ps lstart unavailable — leave startedAt undefined
         }
+      } catch {
+        // ps lstart unavailable — leave startedAt undefined
       }
 
       return detected

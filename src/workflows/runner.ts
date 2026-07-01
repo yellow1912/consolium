@@ -68,6 +68,7 @@ export class WorkflowRunner {
         } else if (mode === "pipeline") {
           const r = await runner.pipeline(task, [], {
             onExecutorStream: options.onStream,
+            requiresVerification: step.requiresVerification,
           })
           content = r.taskContent
         } else if (mode === "debate") {

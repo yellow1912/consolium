@@ -1,10 +1,43 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, dirname } from "node:path"
 import type { AgentRegistryEntry } from "./types.js"
 import { ProcessDetector } from "./process-detector.js"
 
 const REGISTRY_PATH = join(homedir(), ".consilium", "agent-registry.json")
+
+function findClaudeSessionFile(cwd: string): string | undefined {
+  if (!cwd) return undefined
+  try {
+    const projectsDir = join(homedir(), ".claude", "projects")
+    const dirs = readdirSync(projectsDir, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+
+    const matchDir = dirs.find(d => {
+      try {
+        return decodeURIComponent(d.name) === cwd
+      } catch {
+        return false
+      }
+    })
+
+    if (!matchDir) return undefined
+
+    const sessionDir = join(projectsDir, matchDir.name)
+    const files = readdirSync(sessionDir).filter(f => f.endsWith(".jsonl"))
+
+    if (files.length === 0) return undefined
+
+    const withStats = files.map(f => {
+      const fullPath = join(sessionDir, f)
+      return { path: fullPath, mtime: statSync(fullPath).mtime.getTime() }
+    })
+    withStats.sort((a, b) => b.mtime - a.mtime)
+    return withStats[0]?.path
+  } catch {
+    return undefined
+  }
+}
 
 export class AgentRegistry {
   private detector = new ProcessDetector()
@@ -46,6 +79,7 @@ export class AgentRegistry {
         cwd: d.cwd ?? process.cwd(),
         startedAt: d.startedAt ?? now,
         status,
+        sessionFilePath: d.bin === "claude" ? findClaudeSessionFile(d.cwd ?? "") : undefined,
         lastSeenAt: now,
       })
     }

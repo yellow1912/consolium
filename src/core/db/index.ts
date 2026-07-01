@@ -52,10 +52,10 @@ export class DbStore {
     this.sqlite.exec(
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions ON agent_sessions(master_session_id, agent_name);"
     )
-    this.sqlite.exec(
-      "CREATE TABLE IF NOT EXISTS knowledge (id TEXT PRIMARY KEY, title TEXT NOT NULL CHECK(length(title) <= 100), content TEXT NOT NULL CHECK(length(content) <= 5000), tags TEXT NOT NULL DEFAULT '[]', scope TEXT NOT NULL DEFAULT 'global', normalized_title TEXT NOT NULL, content_hash TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(normalized_title, scope), UNIQUE(content_hash, scope));"
-    )
     try {
+      this.sqlite.exec(
+        "CREATE TABLE IF NOT EXISTS knowledge (id TEXT PRIMARY KEY, title TEXT NOT NULL CHECK(length(title) <= 100), content TEXT NOT NULL CHECK(length(content) <= 5000), tags TEXT NOT NULL DEFAULT '[]', scope TEXT NOT NULL DEFAULT 'global', normalized_title TEXT NOT NULL, content_hash TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(normalized_title, scope), UNIQUE(content_hash, scope));"
+      )
       this.sqlite.exec(
         "CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(title, content, tags, content='knowledge', content_rowid='rowid', tokenize='porter unicode61');"
       )
@@ -68,6 +68,12 @@ export class DbStore {
       this.sqlite.exec(
         "CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge BEGIN INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content, tags) VALUES ('delete', old.rowid, old.title, old.content, old.tags); INSERT INTO knowledge_fts(rowid, title, content, tags) VALUES (new.rowid, new.title, new.content, new.tags); END;"
       )
+      // Rebuild FTS index if knowledge rows exist but FTS is empty (e.g. after upgrade)
+      const ftsCount = this.sqlite.query("SELECT COUNT(*) as n FROM knowledge_fts").get() as { n: number }
+      const knowledgeCount = this.sqlite.query("SELECT COUNT(*) as n FROM knowledge").get() as { n: number }
+      if (ftsCount.n === 0 && knowledgeCount.n > 0) {
+        this.sqlite.exec("INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
+      }
     } catch (err) {
       console.error("Warning: FTS5 module unavailable — memory full-text search will be disabled.", err)
     }

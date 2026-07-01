@@ -25,13 +25,17 @@ export function ConsoleApp() {
       return
     }
     try {
-      // Attempt to write to agent stdin FIFO if available
-      const { writeFileSync } = await import("node:fs")
-      const fifoPath = `${process.env.HOME}/.consilium/agents/${selectedAgent.pid}/stdin`
-      writeFileSync(fifoPath, text + "\n")
-      setStatusMessage(`Sent to ${selectedAgent.name}`)
-    } catch {
-      setStatusMessage(`Send not available for ${selectedAgent.name} (pid:${selectedAgent.pid})`)
+      const { TtyWriter } = await import("../../core/agent-monitor/tty-writer.js")
+      const writer = new TtyWriter()
+      const location = writer.detectTerminal(selectedAgent.pid)
+      if (!location) {
+        setStatusMessage(`No supported terminal for ${selectedAgent.name} (tmux/WezTerm/iTerm2/Terminal.app required)`)
+        return
+      }
+      writer.send(location, text)
+      setStatusMessage(`✓ Sent to ${selectedAgent.name} via ${location.type}`)
+    } catch (e) {
+      setStatusMessage(`Error: ${e instanceof Error ? e.message : String(e)}`)
     }
   }, [selectedAgent])
 

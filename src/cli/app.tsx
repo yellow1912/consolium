@@ -695,10 +695,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       case "memory": {
         const sub = args[0]
         const { MemoryStore } = await import("../core/memory/index.js")
-        const { DbStore } = await import("../core/db/index.js")
-        const dbPath = `${process.env.HOME}/.consilium/consilium.db`
-        const dbStore = new DbStore(dbPath)
-        const memStore = new MemoryStore(dbStore)
+        const memStore = new MemoryStore(sessionMgr.current.getStore())
 
         if (sub === "search") {
           const query = args.slice(1).join(" ")
@@ -763,7 +760,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         setLoadingText(`Sending to ${agentName}...`)
         try {
           const { AgentRegistry } = await import("../core/agent-monitor/registry.js")
-          const entries = new AgentRegistry().load()
+          const entries = new AgentRegistry().sync()
           const entry = entries.find(e => e.name === agentName)
           if (!entry) {
             addMessage("system", null, `Agent '${agentName}' not found. Run /agents status to see running agents.`)

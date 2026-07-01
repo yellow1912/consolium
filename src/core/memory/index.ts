@@ -38,30 +38,28 @@ export class MemoryStore {
     const normalizedTitle = title.toLowerCase().trim().replace(/\s+/g, " ")
     const contentHash = createHash("sha256").update(content).digest("hex")
     const now = new Date().toISOString()
-    const id = crypto.randomUUID()
     const tagsJson = JSON.stringify(tags)
 
-    // UPSERT: on unique conflict (normalized_title+scope or content_hash+scope), update
-    this.db.run(`
-      INSERT INTO knowledge (id, title, content, tags, scope, normalized_title, content_hash, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(normalized_title, scope) DO UPDATE SET
-        content = excluded.content,
-        tags = excluded.tags,
-        content_hash = excluded.content_hash,
-        updated_at = excluded.updated_at
-      ON CONFLICT(content_hash, scope) DO UPDATE SET
-        title = excluded.title,
-        tags = excluded.tags,
-        normalized_title = excluded.normalized_title,
-        updated_at = excluded.updated_at
-    `, [id, title, content, tagsJson, scope, normalizedTitle, contentHash, now, now])
+    // Check for existing by normalized_title+scope first
+    const existingByTitle = this.getByNormalizedTitle(normalizedTitle, scope)
+    if (existingByTitle) {
+      return this.updateKnowledge({ id: existingByTitle.id, content, tags, scope })
+    }
 
-    return (
-      this.getById(id) ??
-      this.getByNormalizedTitle(normalizedTitle, scope) ??
-      this.getByContentHash(contentHash, scope)!
+    // Check for existing by content_hash+scope
+    const existingByHash = this.getByContentHash(contentHash, scope)
+    if (existingByHash) {
+      return this.updateKnowledge({ id: existingByHash.id, title, tags, scope })
+    }
+
+    // Clean insert — no conflicts possible
+    const id = crypto.randomUUID()
+    this.db.run(
+      "INSERT INTO knowledge (id, title, content, tags, scope, normalized_title, content_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [id, title, content, tagsJson, scope, normalizedTitle, contentHash, now, now]
     )
+
+    return this.getById(id)!
   }
 
   updateKnowledge(params: { id: string; title?: string; content?: string; tags?: string[]; scope?: KnowledgeScope }): KnowledgeRecord {

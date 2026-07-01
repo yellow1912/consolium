@@ -671,7 +671,9 @@ if (values.workflow) {
     switch (mode) {
       case "council": {
         const result = await runner.council(task, [], {
+          adversarial: true,
           onAgentComplete: r => process.stderr.write(`[${r.agent}] responded\n`),
+          onCritiqueComplete: e => process.stderr.write(`[${e.critic}] critique done\n`),
           onAgentError: (name, err) => process.stderr.write(`[${name}] error: ${err.message}\n`),
         })
         console.log(result.synthesis)

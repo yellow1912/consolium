@@ -3,8 +3,14 @@ import { buildBoundedContextPrompt } from "../adapters/context"
 import { extractJson, dispatchSelectionSchema, workflowPlanSchema, pipelineReviewSchema } from "./router-utils"
 import type { WorkflowPlan } from "./router-utils"
 
+export type CritiqueEntry = {
+  critic: string
+  content: string
+}
+
 export type CouncilResult = {
   responses: AgentResponse[]
+  critiques?: CritiqueEntry[]
   synthesis: string
 }
 
@@ -224,7 +230,9 @@ export class CouncilRunner {
   }
 
   async council(prompt: string, context: Message[], options?: {
+    adversarial?: boolean
     onAgentComplete?: (response: AgentResponse) => void
+    onCritiqueComplete?: (entry: CritiqueEntry) => void
     onAgentError?: (agentName: string, error: Error) => void
     onAgentStream?: (agentName: string, token: string) => void
     signal?: AbortSignal
@@ -251,22 +259,75 @@ export class CouncilRunner {
     })
     if (responses.length === 0) throw new Error("All agents failed to respond")
     const MAX_RESPONSE_CHARS = 6_000
+    const MAX_CRITIQUE_CHARS = 2_000
     const MAX_SYNTHESIS_CHARS = 12_000
+
+    // Adversarial critique round: each agent critiques peers' first-round responses
+    let critiques: CritiqueEntry[] | undefined
+    if (options?.adversarial !== false && responses.length > 1) {
+      const critiqueAc = new AbortController()
+      const critiqueTimeout = setTimeout(() => critiqueAc.abort(), 60_000)
+      if (options?.signal) {
+        options.signal.addEventListener("abort", () => critiqueAc.abort(), { once: true })
+      }
+      try {
+        const critiqueSettled = await Promise.allSettled(responses.map(async r => {
+          const peers = responses.filter(p => p.agent !== r.agent)
+          const peerBlock = peers.map(p => {
+            const c = p.content.length > MAX_CRITIQUE_CHARS
+              ? p.content.slice(0, MAX_CRITIQUE_CHARS) + "\n[... truncated ...]"
+              : p.content
+            return `[${p.agent}]: ${c}`
+          }).join("\n")
+          const critiquePrompt = `IMPORTANT: Respond with text only. Do NOT run any commands, tools, or file operations.\n\nOriginal question: "${prompt}"\n\nYour peers responded:\n${peerBlock}\n\nCritique these responses in 2-3 sentences: what is correct, what is missing or wrong, what perspective did they overlook? Be direct and specific.`
+          const adapter = this.adapters.find(a => a.name === r.agent)
+          if (!adapter) throw new Error(`adapter ${r.agent} not found`)
+          const critiqueResp = await adapter.query(critiquePrompt, [], { signal: critiqueAc.signal })
+          const entry: CritiqueEntry = { critic: r.agent, content: critiqueResp.content }
+          options?.onCritiqueComplete?.(entry)
+          return entry
+        }))
+        critiques = critiqueSettled
+          .filter((s): s is PromiseFulfilledResult<CritiqueEntry> => s.status === "fulfilled")
+          .map(s => s.value)
+      } finally {
+        clearTimeout(critiqueTimeout)
+      }
+    }
+
     const responseBlock = responses.map(r => {
       const content = r.content.length > MAX_RESPONSE_CHARS
         ? r.content.slice(0, MAX_RESPONSE_CHARS) + "\n[... truncated ...]"
         : r.content
       return `[${r.agent}]: ${content}`
     }).join("\n")
-    const truncated = responseBlock.length > MAX_SYNTHESIS_CHARS
-      ? responseBlock.slice(0, MAX_SYNTHESIS_CHARS) + "\n[... truncated for synthesis ...]"
+    const critiqueBlock = critiques && critiques.length > 0
+      ? critiques.map(c => {
+          const content = c.content.length > MAX_CRITIQUE_CHARS
+            ? c.content.slice(0, MAX_CRITIQUE_CHARS) + "\n[... truncated ...]"
+            : c.content
+          return `[${c.critic} critique]: ${content}`
+        }).join("\n")
+      : undefined
+    const combinedBlock = critiqueBlock
+      ? `${responseBlock}\n\nPeer critiques:\n${critiqueBlock}`
       : responseBlock
-    const synthesisPrompt = [
-      `You asked: "${prompt}"`,
-      `Agent responses:`,
-      truncated,
-      `Synthesize the best answer.`,
-    ].join("\n")
+    const truncated = combinedBlock.length > MAX_SYNTHESIS_CHARS
+      ? combinedBlock.slice(0, MAX_SYNTHESIS_CHARS) + "\n[... truncated for synthesis ...]"
+      : combinedBlock
+    const synthesisPrompt = critiqueBlock
+      ? [
+          `You asked: "${prompt}"`,
+          `Agent responses and peer critiques:`,
+          truncated,
+          `Synthesize the best final answer, incorporating valid critique points.`,
+        ].join("\n")
+      : [
+          `You asked: "${prompt}"`,
+          `Agent responses:`,
+          truncated,
+          `Synthesize the best answer.`,
+        ].join("\n")
     const fallbackSynthesis = () => responses.map(r => `### ${r.agent}\n${r.content}`).join("\n\n")
     let synthesis: string
     const synthesisAc = new AbortController()
@@ -282,7 +343,7 @@ export class CouncilRunner {
     } finally {
       clearTimeout(timeoutId)
     }
-    return { responses, synthesis }
+    return { responses, critiques, synthesis }
   }
 
   async dispatch(prompt: string, context: Message[], options?: {

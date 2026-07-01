@@ -103,6 +103,41 @@ if (values.workflow) {
 } else if (values.mcp) {
   const { startMcpServer } = await import("./mcp/server")
   await startMcpServer()
+} else if (positionals[0] === "agents") {
+  const sub = positionals[1]
+  const { AgentRegistry } = await import("./core/agent-monitor/registry")
+
+  if (!sub || sub === "list") {
+    const entries = new AgentRegistry().sync()
+    if (values.json) {
+      console.log(JSON.stringify(entries, null, 2))
+    } else if (entries.length === 0) {
+      console.log("No agent processes detected.")
+    } else {
+      const statusEmoji: Record<string, string> = {
+        running: "🟢",
+        waiting: "🟡",
+        idle: "⚪",
+        unknown: "❓",
+      }
+      const truncate = (s: string, n: number) => s.length > n ? s.slice(0, n - 1) + "…" : s
+      const header = `${"PID".padEnd(8)} ${"NAME".padEnd(24)} ${"TYPE".padEnd(14)} ${"STATUS".padEnd(12)} ${"CWD".padEnd(41)} LAST SEEN`
+      console.log(header)
+      console.log("-".repeat(header.length))
+      for (const e of entries) {
+        const emoji = statusEmoji[e.status] ?? "❓"
+        const status = `${emoji} ${e.status}`.padEnd(12)
+        const lastSeen = new Date(e.lastSeenAt).toLocaleTimeString()
+        console.log(
+          `${String(e.pid).padEnd(8)} ${e.name.padEnd(24)} ${e.type.padEnd(14)} ${status} ${truncate(e.cwd, 41).padEnd(41)} ${lastSeen}`
+        )
+      }
+    }
+  } else {
+    console.error(`Usage: consilium agents [list] [--json]`)
+    process.exit(1)
+  }
+  process.exit(0)
 } else if (positionals[0] === "memory") {
   const sub = positionals[1]
   const { DbStore } = await import("./core/db/index")

@@ -376,6 +376,41 @@ export default function App({ initialMode = "council", initialRouter = "claude",
       }
 
       case "agents": {
+        const sub = args[0]
+
+        if (sub === "status") {
+          setIsLoading(true)
+          setLoadingText("Scanning agent processes...")
+          try {
+            const { AgentRegistry } = await import("../core/agent-monitor/registry.js")
+            const entries = new AgentRegistry().sync()
+            const statusEmoji: Record<string, string> = {
+              running: "🟢",
+              waiting: "🟡",
+              idle: "⚪",
+              unknown: "❓",
+            }
+            const truncate = (s: string, n: number) => s.length > n ? s.slice(0, n - 1) + "…" : s
+            if (entries.length === 0) {
+              addMessage("system", null, "No agent processes detected.")
+            } else {
+              const lines = entries.map(e => {
+                const emoji = statusEmoji[e.status] ?? "❓"
+                const lastSeen = new Date(e.lastSeenAt).toLocaleTimeString()
+                return `  ${emoji} ${e.name}  [${e.type}]  ${truncate(e.cwd, 40)}  (last seen ${lastSeen})`
+              })
+              addMessage("system", null, `Running agent processes (${entries.length}):\n${lines.join("\n")}`)
+            }
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e))
+          } finally {
+            setIsLoading(false)
+            setLoadingText("")
+          }
+          break
+        }
+
+        // Default: list configured adapters and their availability
         const registry = registryRef.current
         const agents = registry.all()
         setIsLoading(true)
@@ -721,7 +756,8 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           "Commands:",
           "  /mode <council|dispatch|pipeline|debate>  — switch mode",
           "  /router <agent-name>                      — set router agent",
-          "  /agents                                   — list available agents",
+          "  /agents                                   — list configured agents",
+          "  /agents status                            — show running agent processes",
           "  /models                                   — show cached models",
           "  /models refresh                           — refresh model cache",
           "  /model <agent> <model-id|clear>           — override agent model",

@@ -19,3 +19,11 @@ export async function startInkCLI(options: {
   )
   await waitUntilExit()
 }
+
+export async function startConsole(): Promise<void> {
+  const { render: inkRender } = await import("ink")
+  const { ConsoleApp } = await import("./console/ConsoleApp.js")
+  const React = await import("react")
+  const { waitUntilExit } = inkRender(React.default.createElement(ConsoleApp))
+  await waitUntilExit()
+}

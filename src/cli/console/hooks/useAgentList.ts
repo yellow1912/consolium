@@ -11,9 +11,10 @@ export function useAgentList(paused: boolean) {
   useEffect(() => {
     let cancelled = false
 
-    const poll = () => {
+    const poll = async () => {
       if (paused || cancelled) return
-      const next = registry.current.sync()
+      const next = await registry.current.sync()
+      if (cancelled) return
       // Quiet-update: only setState if list actually changed
       setAgents(prev => {
         const changed = JSON.stringify(prev) !== JSON.stringify(next)

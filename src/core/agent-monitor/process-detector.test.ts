@@ -141,7 +141,7 @@ describe("AgentRegistry", () => {
     expect(Array.isArray(result)).toBe(true)
   })
 
-  test("sync() merges detected processes and drops dead entries", () => {
+  test("sync() merges detected processes and drops dead entries", async () => {
     const registry = new AgentRegistry()
 
     // Mock the detector on the registry instance
@@ -186,7 +186,7 @@ describe("AgentRegistry", () => {
     // Patch save() to be a no-op
     registry.save = () => {}
 
-    const result = registry.sync()
+    const result = await registry.sync()
 
     // Dead entry (deadPid) should be dropped
     expect(result.find(e => e.pid === deadPid)).toBeUndefined()

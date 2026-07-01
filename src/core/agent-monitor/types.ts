@@ -19,4 +19,7 @@ export interface AgentRegistryEntry {
   sessionFilePath?: string   // matched JSONL session file
   status: AgentStatus
   lastSeenAt: string
+  sessionTitle?: string      // parsed from JSONL first user message
+  lastActiveAt?: string      // ISO, from JSONL last event timestamp
+  matchConfidence?: "high" | "low"
 }

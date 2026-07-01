@@ -115,7 +115,7 @@ if (values.workflow) {
   const { AgentRegistry } = await import("./core/agent-monitor/registry")
 
   if (!sub || sub === "list") {
-    const entries = new AgentRegistry().sync()
+    const entries = await new AgentRegistry().sync()
     if (values.json) {
       console.log(JSON.stringify(entries, null, 2))
     } else if (entries.length === 0) {
@@ -268,7 +268,7 @@ if (values.workflow) {
       process.exit(1)
     }
 
-    const entries = new AgentRegistry().sync()
+    const entries = await new AgentRegistry().sync()
     const entry = entries.find(e => e.name === agentId || String(e.pid) === agentId)
     if (!entry) {
       console.error(`Agent '${agentId}' not found. Run \`consilium agents list\` to see running agents.`)
@@ -358,7 +358,7 @@ if (values.workflow) {
     }
 
     const registry = new AgentRegistry()
-    registry.sync()
+    await registry.sync()
 
     if (found) {
       console.log(`Started ${agentType} in tmux session '${sessionName}'.`)
@@ -373,7 +373,7 @@ if (values.workflow) {
       process.exit(1)
     }
 
-    const entries = new AgentRegistry().sync()
+    const entries = await new AgentRegistry().sync()
     const entry = entries.find(e => e.name === agentId || String(e.pid) === agentId || e.name.startsWith(agentId))
     if (!entry) {
       console.error(`Agent '${agentId}' not found. Run \`consilium agents list\` to see running agents.`)

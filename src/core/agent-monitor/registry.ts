@@ -44,7 +44,7 @@ export class AgentRegistry {
     const alive = existing.filter(e => this.detector.isAlive(e.pid))
 
     // 3. Match detected agents to JSONL session files (1:1 greedy by birth-time proximity)
-    const matches = await matchAgentsToSessions(detected)
+    const matches = await matchAgentsToSessions(detected.map(d => ({ ...d, agentType: d.agentType })))
     const matchByPid = new Map(matches.map(m => [m.pid, m]))
 
     // 4. Add newly detected processes not already in registry
@@ -79,7 +79,7 @@ export class AgentRegistry {
         updated.status = this.detector.getClaudeStatus(e.pid)
       }
       // Re-parse known Claude JSONL session file for fresh title and lastActiveAt
-      if (e.sessionFilePath) {
+      if (e.type === "claude" && e.sessionFilePath) {
         try {
           const parsed = await parseClaudeSession(e.sessionFilePath)
           if (parsed.title) updated.sessionTitle = parsed.title

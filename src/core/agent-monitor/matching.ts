@@ -21,7 +21,7 @@ const DEFAULT_MAX_AGE_MS = 3 * 60 * 1000 // 3 minutes
  *    unclaimed file in the same project dir (if any)
  */
 export async function matchAgentsToSessions(
-  agents: Array<{ pid: number; cwd?: string; startedAt?: string }>,
+  agents: Array<{ pid: number; cwd?: string; startedAt?: string; agentType?: string }>,
   maxAgeMs: number = DEFAULT_MAX_AGE_MS,
 ): Promise<MatchResult[]> {
   type Candidate = {
@@ -75,10 +75,12 @@ export async function matchAgentsToSessions(
     })
   }
 
-  // Phase 2: low-confidence fallback for unmatched agents with a cwd
+  // Phase 2: low-confidence fallback — only for Claude agents to avoid claiming
+  // Claude JSONL files for Codex/Gemini/OpenCode agents in the same cwd
   for (const agent of agents) {
     if (!agent.cwd) continue
     if (matchedPids.has(agent.pid)) continue
+    if (agent.agentType && agent.agentType !== "claude") continue
 
     const files = listSessionFiles(agent.cwd)
     for (const filePath of files) {

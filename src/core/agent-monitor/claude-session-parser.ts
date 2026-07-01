@@ -149,7 +149,7 @@ export function listSessionFiles(cwd: string): string[] {
   if (!cwd) return []
   try {
     const projectsDir = join(homedir(), ".claude", "projects")
-    const encodedCwd = encodeURIComponent(cwd)
+    const encodedCwd = cwd.replace(/[^a-zA-Z0-9]/g, "-")
     const sessionDir = join(projectsDir, encodedCwd)
 
     let files: string[]

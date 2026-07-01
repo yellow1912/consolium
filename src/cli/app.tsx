@@ -386,7 +386,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           setLoadingText("Scanning agent processes...")
           try {
             const { AgentRegistry } = await import("../core/agent-monitor/registry.js")
-            const entries = new AgentRegistry().sync()
+            const entries = await new AgentRegistry().sync()
             const statusEmoji: Record<string, string> = {
               running: "🟢",
               waiting: "🟡",
@@ -816,7 +816,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         setLoadingText(`Sending to ${agentName}...`)
         try {
           const { AgentRegistry } = await import("../core/agent-monitor/registry.js")
-          const entries = new AgentRegistry().sync()
+          const entries = await new AgentRegistry().sync()
           const entry = entries.find(e => e.name === agentName)
           if (!entry) {
             addMessage("system", null, `Agent '${agentName}' not found. Run /agents status to see running agents.`)
@@ -850,7 +850,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         setLoadingText(`Focusing ${agentName}...`)
         try {
           const { AgentRegistry } = await import("../core/agent-monitor/registry.js")
-          const entries = new AgentRegistry().sync()
+          const entries = await new AgentRegistry().sync()
           const entry = entries.find(e => e.name === agentName || e.name.startsWith(agentName))
           if (!entry) {
             addMessage("system", null, `Agent '${agentName}' not found. Run /agents status to see running agents.`)
@@ -890,7 +890,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
             return
           }
           const { AgentRegistry } = await import("../core/agent-monitor/registry.js")
-          const entries = new AgentRegistry().sync()
+          const entries = await new AgentRegistry().sync()
           const { TtyWriter } = await import("../core/agent-monitor/tty-writer.js")
           const writer = new TtyWriter()
           let sent = 0

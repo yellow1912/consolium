@@ -232,7 +232,7 @@ if (values.workflow) {
         console.error(`Group '${name}' not found.`)
         process.exit(1)
       }
-      const entries = new AgentRegistry().sync()
+      const entries = await new AgentRegistry().sync()
       const statusEmoji: Record<string, string> = { running: "🟢", waiting: "🟡", idle: "⚪", unknown: "❓" }
       console.log(`Group: ${group.name}`)
       console.log(`Created: ${new Date(group.createdAt).toLocaleString()}`)
@@ -266,7 +266,7 @@ if (values.workflow) {
       console.error(`Group '${groupName}' not found. Run \`consilium agents group list\` to see groups.`)
       process.exit(1)
     }
-    const entries = new AgentRegistry().sync()
+    const entries = await new AgentRegistry().sync()
     const writer = new TtyWriter()
     let sent = 0
     let failed = 0

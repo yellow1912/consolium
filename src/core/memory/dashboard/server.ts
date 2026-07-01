@@ -58,6 +58,7 @@ export function startDashboard(opts: { port?: number; dbPath: string; openBrowse
 
   Bun.serve({
     port,
+    hostname: "127.0.0.1",
     fetch(req: Request): Response {
       const url = new URL(req.url)
 

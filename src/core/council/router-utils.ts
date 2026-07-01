@@ -20,6 +20,7 @@ export const workflowPlanSchema = z.object({
 export const pipelineReviewSchema = z.object({
   verdict: z.enum(["approved", "changes_requested"]),
   content: z.string(),
+  verificationEvidence: z.string().optional(),
 })
 
 export type DispatchSelection = z.infer<typeof dispatchSelectionSchema>

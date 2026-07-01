@@ -5,6 +5,7 @@ export type WorkflowStep = {
   mode?: "council" | "dispatch" | "pipeline" | "debate"
   task: string
   output?: string
+  requiresVerification?: boolean
 }
 
 export type WorkflowDef = {

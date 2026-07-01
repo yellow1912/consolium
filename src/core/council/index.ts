@@ -12,9 +12,45 @@ export type PipelineReview = {
   reviewer: string
   verdict: string
   content: string
+  verificationEvidence?: string
   metadata?: {
     fallbackReason?: string
   }
+}
+
+const TRIVIAL_PATTERNS = [
+  /should work now/i,
+  /previous run show/i,
+  /it should pass/i,
+  /looks good/i,
+  /trust me/i,
+]
+
+const TERMINAL_MARKERS = ["$", ">", "exit", "Error", "✓", "✗", "PASS", "FAIL", "0 failures", "`"]
+
+export function isEvidenceTrivial(evidence: string): boolean {
+  const hasTerminalOutput =
+    TERMINAL_MARKERS.some(m => evidence.includes(m)) || /\d+ms/.test(evidence)
+  if (hasTerminalOutput) return false
+  return TRIVIAL_PATTERNS.some(p => p.test(evidence))
+}
+
+export function applyEvidenceGate(
+  requiresVerification: boolean | undefined,
+  verdict: "approved" | "changes_requested",
+  verificationEvidence: string | undefined,
+): { verdict: "approved" | "changes_requested"; downgraded: boolean } {
+  if (!requiresVerification || verdict !== "approved") {
+    return { verdict, downgraded: false }
+  }
+  if (!verificationEvidence || verificationEvidence.trim() === "" || isEvidenceTrivial(verificationEvidence)) {
+    return { verdict: "changes_requested", downgraded: true }
+  }
+  return { verdict, downgraded: false }
+}
+
+export function getVerificationFallbackVerdict(requiresVerification?: boolean): "approved" | "changes_requested" {
+  return requiresVerification ? "changes_requested" : "approved"
 }
 
 export type WorkflowStepResult = {
@@ -270,6 +306,7 @@ export class CouncilRunner {
     onStepStart?: (stepIndex: number, total: number, agentName: string) => void
     onStepComplete?: (result: WorkflowStepResult) => void
     maxIterations?: number
+    requiresVerification?: boolean
     signal?: AbortSignal
   }): Promise<PipelineResult> {
     const maxIterations = options?.maxIterations ?? 1
@@ -371,10 +408,17 @@ export class CouncilRunner {
 
       // Review phase (effectiveReviewers = plan-external agents, or router as fallback)
       {
+        const requiresVerification = options?.requiresVerification
+        const jsonFormat = requiresVerification
+          ? `{ "verdict": "approved" | "changes_requested", "content": "<your feedback>", "verificationEvidence": "<actual command output and exit code>" }`
+          : `{ "verdict": "approved" | "changes_requested", "content": "<your feedback>" }`
+        const verificationInstruction = requiresVerification
+          ? `\nThis step requires verification evidence. You MUST include a \`verificationEvidence\` field in your JSON response containing the actual command output and exit code. Phrases like "should work now" or "previous run showed OK" without command output are NOT acceptable evidence.`
+          : ""
         const reviewPrompt = [
           `Task: "${prompt}"`,
           `Result:\n${taskContent}`,
-          `Review and respond with JSON only: { "verdict": "approved" | "changes_requested", "content": "<your feedback>" }`,
+          `Review and respond with JSON only: ${jsonFormat}${verificationInstruction}`,
         ].join("\n")
         const reviewSettled = await Promise.allSettled(effectiveReviewers.map(async a => {
           const r = await this.queryAgent(a, reviewPrompt, [], "pipeline")
@@ -383,10 +427,14 @@ export class CouncilRunner {
           try {
             const parsed = extractJson(r.content)
             const validated = pipelineReviewSchema.parse(parsed)
-            review = { reviewer: a.name, verdict: validated.verdict, content: validated.content }
+            const gated = applyEvidenceGate(requiresVerification, validated.verdict, validated.verificationEvidence)
+            const finalContent = gated.downgraded
+              ? `${validated.content}\n\n[Auto-downgraded: verification evidence required but not provided]`
+              : validated.content
+            review = { reviewer: a.name, verdict: gated.verdict, content: finalContent, verificationEvidence: validated.verificationEvidence }
           } catch (e: any) {
             reviewFallbackReason = e.message || String(e)
-            review = { reviewer: a.name, verdict: "approved", content: r.content, metadata: { fallbackReason: reviewFallbackReason } }
+            review = { reviewer: a.name, verdict: getVerificationFallbackVerdict(requiresVerification), content: r.content, metadata: { fallbackReason: reviewFallbackReason } }
           }
           options?.onReviewComplete?.(review)
           return review

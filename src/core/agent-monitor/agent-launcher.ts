@@ -34,8 +34,15 @@ export async function launchAgentInTmux(
     ? ["tmux", "new-window", "-n", windowName, "-c", cwd, agentType]
     : ["tmux", "new-session", "-d", "-s", windowName, "-c", cwd, agentType]
 
-  const spawn = Bun.spawnSync(tmuxCmd, { stdout: "pipe", stderr: "pipe" })
   const location = insideTmux ? `window '${windowName}'` : `session '${windowName}'`
+
+  let spawn: ReturnType<typeof Bun.spawnSync>
+  try {
+    spawn = Bun.spawnSync(tmuxCmd, { stdout: "pipe", stderr: "pipe" })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return { ok: false, windowName, location, found: false, error: msg }
+  }
 
   if (spawn.exitCode !== 0) {
     const err = new TextDecoder().decode(spawn.stderr).trim()

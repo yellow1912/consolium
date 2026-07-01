@@ -64,6 +64,39 @@ describe("parsePsLine", () => {
     const result = parsePsLine(line, KNOWN_BINS)
     expect(result).toBeNull()
   })
+
+  test("node process wrapping Gemini CLI returns agentType=gemini", () => {
+    const line =
+      "  3000  1000  ??  /usr/bin/node /usr/local/lib/node_modules/@google/gemini-cli/dist/index.js"
+    const result = parsePsLine(line, KNOWN_BINS)
+    expect(result).not.toBeNull()
+    expect(result!.bin).toBe("node")
+    expect(result!.agentType).toBe("gemini")
+  })
+
+  test("direct gemini binary returns agentType=gemini", () => {
+    const line = "  5000  1000  s004  /usr/local/bin/gemini chat"
+    const result = parsePsLine(line, KNOWN_BINS)
+    expect(result).not.toBeNull()
+    expect(result!.bin).toBe("gemini")
+    expect(result!.agentType).toBe("gemini")
+  })
+
+  test("opencode binary returns agentType=opencode", () => {
+    const line = "  6000  1000  s005  /usr/local/bin/opencode"
+    const result = parsePsLine(line, KNOWN_BINS)
+    expect(result).not.toBeNull()
+    expect(result!.bin).toBe("opencode")
+    expect(result!.agentType).toBe("opencode")
+  })
+
+  test("claude binary returns agentType=claude", () => {
+    const line = "  7000  1000  s006  /usr/local/bin/claude --resume session-id"
+    const result = parsePsLine(line, KNOWN_BINS)
+    expect(result).not.toBeNull()
+    expect(result!.bin).toBe("claude")
+    expect(result!.agentType).toBe("claude")
+  })
 })
 
 // ── parseLsofOutput ────────────────────────────────────────────────────────────

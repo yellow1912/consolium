@@ -41,3 +41,54 @@ describe("parseSlash", () => {
     expect(parseSlash("/debate autopilot off")).toEqual({ command: "debate", args: ["autopilot", "off"] })
   })
 })
+
+describe("quoted tokens", () => {
+  it("double-quoted path is preserved as a single token", () => {
+    expect(parseSlash('/start claude --cwd "/My Projects/app"')).toEqual({
+      command: "start",
+      args: ["claude", "--cwd", "/My Projects/app"],
+    })
+  })
+
+  it("single-quoted path is preserved as a single token", () => {
+    expect(parseSlash("/start claude --cwd '/path with spaces'")).toEqual({
+      command: "start",
+      args: ["claude", "--cwd", "/path with spaces"],
+    })
+  })
+
+  it("unquoted path with spaces still splits (user must quote)", () => {
+    expect(parseSlash("/start claude --cwd /My Projects/app")).toEqual({
+      command: "start",
+      args: ["claude", "--cwd", "/My", "Projects/app"],
+    })
+  })
+
+  it("mixed quoted and unquoted args work together", () => {
+    expect(parseSlash('/start claude --cwd "/My Projects/app" --model opus')).toEqual({
+      command: "start",
+      args: ["claude", "--cwd", "/My Projects/app", "--model", "opus"],
+    })
+  })
+
+  it("quoted title in /memory store splits correctly", () => {
+    expect(parseSlash('/memory store "JWT expiry" | JWT tokens expire after 1h')).toEqual({
+      command: "memory",
+      args: ["store", "JWT expiry", "|", "JWT", "tokens", "expire", "after", "1h"],
+    })
+  })
+
+  it("empty double quotes produce an empty string token", () => {
+    expect(parseSlash('/cmd ""')).toEqual({
+      command: "cmd",
+      args: [""],
+    })
+  })
+
+  it("unclosed quote treats the rest of the string as one token", () => {
+    expect(parseSlash('/cmd "unclosed')).toEqual({
+      command: "cmd",
+      args: ["unclosed"],
+    })
+  })
+})

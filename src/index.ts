@@ -138,8 +138,152 @@ if (values.workflow) {
         )
       }
     }
+  } else if (sub === "group") {
+    const { AgentGroups } = await import("./core/agent-monitor/groups")
+    const groups = new AgentGroups()
+    const groupSub = positionals[2]
+
+    if (!groupSub || groupSub === "list") {
+      const all = groups.list()
+      if (all.length === 0) {
+        console.log("No agent groups defined.")
+      } else {
+        const header = `${"NAME".padEnd(24)} MEMBERS`
+        console.log(header)
+        console.log("-".repeat(header.length))
+        for (const g of all) {
+          console.log(`${g.name.padEnd(24)} ${g.agentIds.join(", ") || "(empty)"}`)
+        }
+      }
+    } else if (groupSub === "create") {
+      const name = positionals[3]
+      if (!name) {
+        console.error("Usage: consilium agents group create <name> [agentId...]")
+        process.exit(1)
+      }
+      const agentIds = positionals.slice(4)
+      try {
+        const group = groups.create(name, agentIds)
+        console.log(`Created group '${group.name}' with ${group.agentIds.length} member(s).`)
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : String(e))
+        process.exit(1)
+      }
+    } else if (groupSub === "delete") {
+      const name = positionals[3]
+      if (!name) {
+        console.error("Usage: consilium agents group delete <name>")
+        process.exit(1)
+      }
+      try {
+        groups.delete(name)
+        console.log(`Deleted group '${name}'.`)
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : String(e))
+        process.exit(1)
+      }
+    } else if (groupSub === "add") {
+      const name = positionals[3]
+      const agentId = positionals[4]
+      if (!name || !agentId) {
+        console.error("Usage: consilium agents group add <name> <agentId>")
+        process.exit(1)
+      }
+      try {
+        const group = groups.addAgent(name, agentId)
+        console.log(`Added '${agentId}' to group '${name}'. Members: ${group.agentIds.length}`)
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : String(e))
+        process.exit(1)
+      }
+    } else if (groupSub === "remove") {
+      const name = positionals[3]
+      const agentId = positionals[4]
+      if (!name || !agentId) {
+        console.error("Usage: consilium agents group remove <name> <agentId>")
+        process.exit(1)
+      }
+      try {
+        const group = groups.removeAgent(name, agentId)
+        console.log(`Removed '${agentId}' from group '${name}'. Members: ${group.agentIds.length}`)
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : String(e))
+        process.exit(1)
+      }
+    } else if (groupSub === "show") {
+      const name = positionals[3]
+      if (!name) {
+        console.error("Usage: consilium agents group show <name>")
+        process.exit(1)
+      }
+      const group = groups.get(name)
+      if (!group) {
+        console.error(`Group '${name}' not found.`)
+        process.exit(1)
+      }
+      const entries = new AgentRegistry().sync()
+      const statusEmoji: Record<string, string> = { running: "🟢", waiting: "🟡", idle: "⚪", unknown: "❓" }
+      console.log(`Group: ${group.name}`)
+      console.log(`Created: ${new Date(group.createdAt).toLocaleString()}`)
+      console.log(`Updated: ${new Date(group.updatedAt).toLocaleString()}`)
+      console.log(`Members (${group.agentIds.length}):`)
+      if (group.agentIds.length === 0) {
+        console.log("  (empty)")
+      } else {
+        for (const id of group.agentIds) {
+          const entry = entries.find(e => e.name === id)
+          const status = entry ? `${statusEmoji[entry.status] ?? "❓"} ${entry.status}` : "  offline"
+          console.log(`  ${id.padEnd(24)} ${status}`)
+        }
+      }
+    } else {
+      console.error("Usage: consilium agents group <list|create|delete|add|remove|show> [args]")
+      process.exit(1)
+    }
+  } else if (sub === "broadcast") {
+    const groupName = positionals[2]
+    const message = positionals.slice(3).join(" ")
+    if (!groupName || !message) {
+      console.error("Usage: consilium agents broadcast <groupName> <message>")
+      process.exit(1)
+    }
+    const { AgentGroups } = await import("./core/agent-monitor/groups")
+    const { TtyWriter } = await import("./core/agent-monitor/tty-writer")
+    const groups = new AgentGroups()
+    const group = groups.get(groupName)
+    if (!group) {
+      console.error(`Group '${groupName}' not found. Run \`consilium agents group list\` to see groups.`)
+      process.exit(1)
+    }
+    const entries = new AgentRegistry().sync()
+    const writer = new TtyWriter()
+    let sent = 0
+    let failed = 0
+    for (const agentId of group.agentIds) {
+      const entry = entries.find(e => e.name === agentId)
+      if (!entry) {
+        console.error(`  [skip] ${agentId}: not found in registry`)
+        failed++
+        continue
+      }
+      const location = writer.detectTerminal(entry.pid)
+      if (!location) {
+        console.error(`  [skip] ${agentId}: no supported terminal detected`)
+        failed++
+        continue
+      }
+      try {
+        writer.send(location, message)
+        console.log(`  [ok] ${agentId} via ${location.type}`)
+        sent++
+      } catch (e) {
+        console.error(`  [fail] ${agentId}: ${e instanceof Error ? e.message : String(e)}`)
+        failed++
+      }
+    }
+    console.log(`\nBroadcast complete: ${sent}/${group.agentIds.length} sent${failed > 0 ? `, ${failed} failed` : ""}.`)
   } else {
-    console.error(`Usage: consilium agents [list] [--json]`)
+    console.error(`Usage: consilium agents [list|group|broadcast] [--json]`)
     process.exit(1)
   }
   process.exit(0)

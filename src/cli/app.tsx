@@ -34,6 +34,7 @@ const SLASH_SUGGESTIONS = [
   "/workflow",
   "/memory",
   "/send",
+  "/send-group",
   "/stop",
   "/help",
   "/debate",
@@ -784,6 +785,50 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         break
       }
 
+      case "send-group": {
+        const groupName = args[0]
+        const message = args.slice(1).join(" ")
+        if (!groupName || !message) {
+          setError("Usage: /send-group <name> <message>")
+          return
+        }
+        setIsLoading(true)
+        setLoadingText(`Broadcasting to group ${groupName}...`)
+        try {
+          const { AgentGroups } = await import("../core/agent-monitor/groups.js")
+          const group = new AgentGroups().get(groupName)
+          if (!group) {
+            addMessage("system", null, `Group '${groupName}' not found.`)
+            return
+          }
+          const { AgentRegistry } = await import("../core/agent-monitor/registry.js")
+          const entries = new AgentRegistry().sync()
+          const { TtyWriter } = await import("../core/agent-monitor/tty-writer.js")
+          const writer = new TtyWriter()
+          let sent = 0
+          let failed = 0
+          for (const agentId of group.agentIds) {
+            const entry = entries.find(e => e.name === agentId)
+            if (!entry) { failed++; continue }
+            const location = writer.detectTerminal(entry.pid)
+            if (!location) { failed++; continue }
+            try {
+              writer.send(location, message)
+              sent++
+            } catch {
+              failed++
+            }
+          }
+          addMessage("system", null, `Sent to ${sent}/${group.agentIds.length} agents in group '${groupName}'.${failed > 0 ? ` (${failed} failed)` : ""}`)
+        } catch (e) {
+          addMessage("system", null, `Error broadcasting to group '${groupName}': ${e instanceof Error ? e.message : String(e)}`)
+        } finally {
+          setIsLoading(false)
+          setLoadingText("")
+        }
+        break
+      }
+
       case "help": {
         const helpText = [
           "Commands:",
@@ -804,6 +849,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           "  /memory search <query>                    — search local memory",
           "  /memory store <title> | <content>         — store entry in local memory",
           "  /send <agent-name> <message>              — send message to running agent's terminal",
+          "  /send-group <name> <message>              — broadcast message to all agents in a group",
           "  /stop                                     — stop debate after current round",
           "  /debate rounds <n>                        — set max debate rounds",
           "  /help                                     — show this help",

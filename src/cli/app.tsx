@@ -34,6 +34,7 @@ const SLASH_SUGGESTIONS = [
   "/workflow",
   "/memory",
   "/send",
+  "/open",
   "/stop",
   "/help",
   "/debate",
@@ -838,6 +839,39 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         break
       }
 
+      case "open": {
+        const agentName = args[0]
+        if (!agentName) {
+          setError("Usage: /open <agent-name>")
+          break
+        }
+        setIsLoading(true)
+        setLoadingText(`Focusing ${agentName}...`)
+        try {
+          const { AgentRegistry } = await import("../core/agent-monitor/registry.js")
+          const entries = new AgentRegistry().sync()
+          const entry = entries.find(e => e.name === agentName || e.name.startsWith(agentName))
+          if (!entry) {
+            addMessage("system", null, `Agent '${agentName}' not found. Run /agents status to see running agents.`)
+            break
+          }
+          const { TerminalFocusManager } = await import("../core/agent-monitor/terminal-focus.js")
+          const focuser = new TerminalFocusManager()
+          const success = await focuser.focusAgent(entry)
+          if (success) {
+            addMessage("system", null, `Focused ${entry.name} (pid ${entry.pid})`)
+          } else {
+            addMessage("system", null, `Could not focus terminal for '${agentName}'. Supported: tmux, WezTerm, iTerm2, Terminal.app`)
+          }
+        } catch (e) {
+          addMessage("system", null, `Error focusing ${agentName}: ${e instanceof Error ? e.message : String(e)}`)
+        } finally {
+          setIsLoading(false)
+          setLoadingText("")
+        }
+        break
+      }
+
       case "help": {
         const helpText = [
           "Commands:",
@@ -860,6 +894,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           "  /memory list [--scope X] [--tags a,b] [--sort title|created|updated|scope] [--limit N]",
           "  /memory summary                           — show memory stats",
           "  /send <agent-name> <message>              — send message to running agent's terminal",
+          "  /open <agent-name>                        — focus terminal window where agent is running",
           "  /stop                                     — stop debate after current round",
           "  /debate rounds <n>                        — set max debate rounds",
           "  /help                                     — show this help",

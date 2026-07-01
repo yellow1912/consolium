@@ -366,10 +366,36 @@ if (values.workflow) {
       console.log(`Agent started in tmux session '${sessionName}' but not yet detected in process list.`)
     }
     process.exit(0)
+  } else if (sub === "open") {
+    const agentId = positionals[2]
+    if (!agentId) {
+      console.error("Usage: consilium agent open <id>")
+      process.exit(1)
+    }
+
+    const entries = new AgentRegistry().sync()
+    const entry = entries.find(e => e.name === agentId || String(e.pid) === agentId || e.name.startsWith(agentId))
+    if (!entry) {
+      console.error(`Agent '${agentId}' not found. Run \`consilium agents list\` to see running agents.`)
+      process.exit(1)
+    }
+
+    const { TerminalFocusManager } = await import("./core/agent-monitor/terminal-focus")
+    const focuser = new TerminalFocusManager()
+    const success = await focuser.focusAgent(entry)
+    if (success) {
+      console.log(`Focused ${entry.name} (pid ${entry.pid})`)
+    } else {
+      console.error(`Could not focus terminal for agent '${entry.name}' (pid ${entry.pid}).`)
+      console.error("Supported terminals: tmux, WezTerm, iTerm2, Terminal.app")
+      process.exit(1)
+    }
+    process.exit(0)
   } else {
-    console.error("Usage: consilium agent <send|start> [args]")
+    console.error("Usage: consilium agent <send|start|open> [args]")
     console.error("  send <message> --id <name-or-pid> [--wait] [--timeout <ms>] [--json]")
     console.error("  start <type> [--name <name>]")
+    console.error("  open <id>")
     process.exit(1)
   }
 } else if (positionals.length > 0 || values.mode === "review") {

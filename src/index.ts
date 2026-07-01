@@ -28,6 +28,7 @@ const { values, positionals } = parseArgs({
     wait: { type: "boolean", default: false },
     timeout: { type: "string" },
     name: { type: "string" },
+    cwd: { type: "string" },
     // channel subcommand options
     token: { type: "string" },
     chat: { type: "string" },
@@ -473,7 +474,7 @@ if (values.workflow) {
   } else if (sub === "start") {
     const agentType = positionals[2]
     if (!agentType) {
-      console.error("Usage: consilium agent start <type> [--name <name>]")
+      console.error("Usage: consilium agent start <type> [--name <name>] [--cwd <path>]")
       process.exit(1)
     }
 
@@ -484,44 +485,26 @@ if (values.workflow) {
       process.exit(1)
     }
 
-    const tmuxBin = Bun.which("tmux")
-    if (!tmuxBin) {
+    if (!Bun.which("tmux")) {
       console.error("agent start requires tmux. Install tmux or start the agent manually.")
       process.exit(1)
     }
 
-    const sessionName = values.name ?? `${agentType}-${Date.now()}`
-    const startResult = Bun.spawnSync(["tmux", "new-session", "-d", "-s", sessionName, agentType], {
-      stdout: "pipe",
-      stderr: "pipe",
+    const { launchAgentInTmux } = await import("./core/agent-monitor/agent-launcher")
+    const result = await launchAgentInTmux(agentType, {
+      name: values.name,
+      cwd: values.cwd,
     })
-    if (startResult.exitCode !== 0) {
-      const err = new TextDecoder().decode(startResult.stderr).trim()
-      console.error(`Failed to start tmux session: ${err}`)
+
+    if (!result.ok) {
+      console.error(`Failed to start tmux ${result.location}: ${result.error}`)
       process.exit(1)
     }
 
-    // Poll up to 5s for the process to appear in ProcessDetector
-    const { ProcessDetector } = await import("./core/agent-monitor/process-detector")
-    const detector = new ProcessDetector()
-    let found = false
-    const deadline = Date.now() + 5_000
-    while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 500))
-      const detected = detector.detect()
-      if (detected.some(d => d.bin === agentType)) {
-        found = true
-        break
-      }
-    }
-
-    const registry = new AgentRegistry()
-    await registry.sync()
-
-    if (found) {
-      console.log(`Started ${agentType} in tmux session '${sessionName}'.`)
+    if (result.found) {
+      console.log(`Started ${agentType} in tmux ${result.location}.`)
     } else {
-      console.log(`Agent started in tmux session '${sessionName}' but not yet detected in process list.`)
+      console.log(`Launched ${agentType} in tmux ${result.location} (not yet visible in process list).`)
     }
     process.exit(0)
   } else if (sub === "open") {

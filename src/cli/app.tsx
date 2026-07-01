@@ -36,6 +36,7 @@ const SLASH_SUGGESTIONS = [
   "/send",
   "/open",
   "/send-group",
+  "/start",
   "/stop",
   "/help",
   "/debate",
@@ -917,6 +918,59 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         break
       }
 
+      case "start": {
+        const agentType = args[0]
+        if (!agentType) {
+          setError("Usage: /start <type> [--cwd <path>]")
+          break
+        }
+
+        // Validate against known agent types
+        const { AGENT_DEFS } = await import("../core/adapters/defs.js")
+        const knownTypes = new Set(["claude", ...AGENT_DEFS.map((d: { bin: string }) => d.bin)])
+        if (!knownTypes.has(agentType)) {
+          setError(`Unknown agent type '${agentType}'. Known: ${[...knownTypes].join(", ")}`)
+          break
+        }
+
+        if (!Bun.which("tmux")) {
+          setError("agent start requires tmux.")
+          break
+        }
+
+        // Validate --cwd: must be followed by a non-flag value
+        const cwdFlagIdx = args.indexOf("--cwd")
+        let launchCwd: string | undefined
+        if (cwdFlagIdx !== -1) {
+          const next = args[cwdFlagIdx + 1]
+          if (!next || next.startsWith("-")) {
+            setError("--cwd requires a path value.")
+            break
+          }
+          launchCwd = next
+        }
+
+        setIsLoading(true)
+        setLoadingText(`Launching ${agentType}...`)
+        try {
+          const { launchAgentInTmux } = await import("../core/agent-monitor/agent-launcher.js")
+          const result = await launchAgentInTmux(agentType, { cwd: launchCwd })
+          if (!result.ok) {
+            addMessage("system", null, `Failed to launch ${agentType}: ${result.error}`)
+          } else if (result.found) {
+            addMessage("system", null, `Started ${agentType} in tmux ${result.location}.`)
+          } else {
+            addMessage("system", null, `Launched ${agentType} in tmux ${result.location} (not yet visible in process list).`)
+          }
+        } catch (e) {
+          addMessage("system", null, `Error launching ${agentType}: ${e instanceof Error ? e.message : String(e)}`)
+        } finally {
+          setIsLoading(false)
+          setLoadingText("")
+        }
+        break
+      }
+
       case "help": {
         const helpText = [
           "Commands:",
@@ -938,6 +992,7 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           "  /memory store <title> | <content>         — store entry in local memory",
           "  /memory list [--scope X] [--tags a,b] [--sort title|created|updated|scope] [--limit N]",
           "  /memory summary                           — show memory stats",
+          "  /start <type> [--cwd <path>]              — launch agent in a new tmux window",
           "  /send <agent-name> <message>              — send message to running agent's terminal",
           "  /open <agent-name>                        — focus terminal window where agent is running",
           "  /send-group <name> <message>              — broadcast message to all agents in a group",

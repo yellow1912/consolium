@@ -26,11 +26,10 @@ To use `consilium` (or `csl`) as a global command from anywhere:
 bun link
 ```
 
-Then verify it works:
+Then verify:
 
 ```bash
 consilium --help
-# or the short alias:
 csl --help
 ```
 
@@ -142,6 +141,95 @@ you> Focus on the migration cost angle
 | `/done` | End debate early, trigger synthesis |
 | `/debate autopilot on` | Stop prompting between rounds |
 
+## Agent Monitor
+
+Consilium detects and tracks all running agent processes on the system.
+
+```bash
+# List all detected agents (pid, name, type, status, session title)
+consilium agents list
+
+# Show live process status
+consilium agents status
+
+# Launch a new agent in a tmux window/session
+consilium agent start claude
+consilium agent start codex --cwd /path/to/project
+consilium agent start gemini --name my-gemini --cwd ~/work
+
+# Focus the terminal window where an agent is running
+consilium agent open <name-or-pid>
+
+# Send a message to a running agent's terminal
+consilium agent send "fix the failing tests" --id claude-12345
+consilium agent send "review this PR" --id my-gemini --wait
+consilium agent send "summarize" --id codex-9876 --wait --timeout 60000 --json
+```
+
+`agent start` requires [tmux](https://github.com/tmux/tmux). When inside an active tmux session it opens a new window; otherwise it creates a detached session.
+
+### Agent Groups
+
+Named sets of agents for broadcasting to multiple agents at once.
+
+```bash
+# Create a group
+consilium agents group create backend claude-12345 codex-9876
+
+# Broadcast a message to all agents in a group
+consilium agents broadcast backend "run the full test suite"
+
+# Manage groups
+consilium agents group list
+consilium agents group show backend
+consilium agents group add backend gemini-5432
+consilium agents group remove backend codex-9876
+consilium agents group delete backend
+```
+
+## Memory
+
+A local knowledge base backed by SQLite FTS5. Stores facts, notes, and context that persist across sessions.
+
+```bash
+# Store knowledge
+consilium memory store "Auth flow" "JWT tokens expire after 1h; refresh via /auth/refresh"
+
+# Search
+consilium memory search "JWT"
+
+# List with filters
+consilium memory list
+consilium memory list --scope project --tags auth,security
+consilium memory list --sort updated --limit 50
+
+# Summary stats
+consilium memory summary
+
+# Browser-based dashboard (graph + browse tabs)
+consilium memory dashboard
+consilium memory dashboard --port 4242 --open
+```
+
+The dashboard runs at `http://localhost:4242` (bound to 127.0.0.1 only) and shows a browsable table and a Cytoscape.js relationship graph.
+
+## Channel Bridge
+
+Connect a Telegram bot to route messages between Telegram chats and running agents.
+
+```bash
+# Connect a bot (long-polling, routes messages to the named agent)
+consilium channel connect --token <BOT_TOKEN> --chat <CHAT_ID> --agent claude-12345
+
+# List active bridges
+consilium channel list
+
+# Disconnect
+consilium channel disconnect <bridge-id>
+```
+
+Messages from Telegram are injected into the agent's terminal via TtyWriter and replies are relayed back to the chat.
+
 ## Slash Commands
 
 Type these directly in the chat prompt:
@@ -151,15 +239,27 @@ Type these directly in the chat prompt:
 | `/mode council\|dispatch\|pipeline\|debate` | Switch execution mode mid-session |
 | `/router <name>` | Switch router agent mid-session |
 | `/agents` | List available agents |
-| `/models` | List cached models per agent (with age and overrides) |
+| `/agents status` | Show running agent processes |
+| `/models` | List cached models per agent |
 | `/models refresh` | Re-fetch models from all agents |
-| `/model <agent> <model-id>` | Override model for a specific agent this session |
+| `/model <agent> <model-id>` | Override model for a specific agent |
 | `/model <agent> clear` | Remove model override |
+| `/start <type> [--cwd <path>]` | Launch agent in a new tmux window |
+| `/send <name> <message>` | Send message to a running agent's terminal |
+| `/open <name>` | Focus terminal window where agent is running |
+| `/send-group <name> <message>` | Broadcast to all agents in a group |
+| `/memory search <query>` | Search local memory |
+| `/memory store <title> \| <content>` | Store an entry in local memory |
+| `/memory list [--scope X] [--tags a,b] [--sort ...]` | List memory entries |
+| `/memory summary` | Show memory stats |
 | `/sessions` | Browse sessions and resume (interactive picker) |
 | `/resume [id]` | Resume a session by ID or interactive picker |
 | `/history` | Show current session history |
+| `/review` | Trigger peer review on last response |
+| `/workflow list` | List available workflows |
+| `/workflow run <name> <input>` | Run a YAML workflow |
 | `/debate rounds <n>` | Set max debate rounds (default: 5) |
-| `/debate autopilot on\|off` | Skip or re-enable human pause between debate rounds |
+| `/debate autopilot on\|off` | Skip or re-enable human pause between rounds |
 | `/help` | Show all commands |
 | `/exit` or `/quit` | Exit consilium |
 
@@ -175,8 +275,6 @@ you> set debate rounds to 3
 you> show my session history
 ```
 
-If the input looks like a control command, Consilium routes it to the command handler. Otherwise it's sent to the agents as a normal message.
-
 ## MCP Integration
 
 Add to your Claude Code MCP config (`~/.claude/mcp.json`):
@@ -189,7 +287,12 @@ Add to your Claude Code MCP config (`~/.claude/mcp.json`):
 }
 ```
 
-Then Claude Code can call Consilium tools: `start_session`, `send_message`, `get_result`, `list_sessions`, `close_session`.
+Or get the config snippet:
+```bash
+consilium --mcp-config
+```
+
+MCP tools: `start_session`, `send_message`, `get_result`, `list_sessions`, `close_session`, `memory_listKnowledge`, `memory_getKnowledgeSummary`.
 
 ## Agents
 
@@ -202,7 +305,7 @@ All agents run via their CLI — no API keys required by Consilium. Each agent m
 | gemini | `gemini` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) |
 | agy | `agy` | [Antigravity CLI](https://github.com/google-deepmind/antigravity-cli) |
 
-Consilium also supports declarative detection and execution for additional CLI agents including: `copilot`, `cursor-agent`, `qwen`, `opencode`, `aider`, `devin`, `hermes`, `kimi`, `kiro`, `vibe`, and `pi`. Available binaries found in your shell's environment PATH will be automatically detected and registered at runtime.
+Additional CLIs auto-detected at runtime when present in PATH: `copilot`, `cursor-agent`, `opencode`, `aider`, `devin`, `hermes`, `kimi`, `kiro`, `qwen`, `vibe`, `pi`.
 
 You need at least one agent installed and authenticated. Consilium detects which CLIs are available and skips any that aren't found.
 
@@ -210,18 +313,23 @@ You need at least one agent installed and authenticated. Consilium detects which
 
 ```
 src/
-├── cli/          — interactive chat loop, slash commands, natural language intent classifier
+├── cli/               — interactive TUI (Ink/React), slash commands, intent classifier
 ├── core/
-│   ├── adapters/ — Claude/Codex/Gemini/Agy adapters + context helper + registry
-│   ├── council/  — CouncilRunner (council, dispatch, pipeline, debate)
-│   ├── db/       — SQLite schema + DbStore (WAL mode)
-│   └── session/  — SessionManager + per-agent session store
-└── mcp/          — MCP server (5 tools)
+│   ├── adapters/      — Claude/Codex/Gemini/Agy adapters + declarative registry + context helper
+│   ├── agent-monitor/ — process detection, registry, session matching, terminal focus,
+│   │                    agent launcher, tmux manager, TtyWriter, WaitWatcher,
+│   │                    agent groups, Telegram channel bridge
+│   ├── council/       — CouncilRunner (council, dispatch, pipeline, debate modes)
+│   ├── db/            — SQLite schema + DbStore (WAL mode, FTS5)
+│   ├── memory/        — knowledge store (list, summary, dashboard)
+│   └── session/       — SessionManager + per-agent session store
+├── mcp/               — MCP server (7 tools)
+└── workflows/         — YAML workflow loader + runner
 ```
 
-State stored at `~/.consilium/consilium.db` (SQLite).
+State stored at `~/.consilium/` (SQLite database, agent registry, agent groups).
 
 ## References
 
-- [orch](https://github.com/yellow1912/consolium/tree/main/brainstorming/orch) — Archival Python prototype this framework evolved from
+- [orch](https://github.com/yellow1912/consolium/tree/main/brainstorming/orch) — archival Python prototype this framework evolved from
 - [agents-council](https://github.com/MrLesk/agents-council) — inspiration for MCP + council patterns

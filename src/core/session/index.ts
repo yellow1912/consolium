@@ -8,6 +8,8 @@ export class SessionManager {
     this.db = new DbStore(dbPath)
   }
 
+  getStore(): DbStore { return this.db }
+
   close() { this.db.close() }
 
   create(input: { mode: "council" | "dispatch" | "pipeline" | "debate"; router?: string; name?: string }) {

@@ -1,5 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
+import type { Database } from "bun:sqlite"
 import { SessionManager } from "../core/session/index"
 import { CouncilRunner } from "../core/council/index"
 import { buildAutoRegistrySync } from "../core/adapters/registry"
@@ -147,13 +148,38 @@ export function buildMcpTools(): McpTool[] {
         required: ["query"],
       },
     },
+    {
+      name: "memory_listKnowledge",
+      description: "List knowledge entries with optional filtering and sorting",
+      inputSchema: {
+        type: "object",
+        properties: {
+          scope: { type: "string", description: "Filter by scope: 'global', 'project:<name>', or 'repo:<name>'" },
+          tags: { type: "array", items: { type: "string" }, description: "Filter entries that contain all given tags" },
+          query: { type: "string", description: "Full-text search query" },
+          sort: { type: "string", enum: ["title", "created", "updated", "scope"], description: "Sort order (default: updated)" },
+          limit: { type: "number", description: "Max results (default 20, max 200)" },
+          offset: { type: "number", description: "Pagination offset" },
+        },
+      },
+    },
+    {
+      name: "memory_getKnowledgeSummary",
+      description: "Get a summary of Consilium's local memory: total count, per-scope counts, top tags, and recency buckets",
+      inputSchema: {
+        type: "object",
+        properties: {},
+      },
+    },
   ]
 }
 
 export async function startMcpServer() {
   const sessionMgr = new SessionManager()
   const registry = buildAutoRegistrySync()
-  const memStore = new MemoryStore(sessionMgr.getStore())
+  const store = sessionMgr.getStore()
+  const rawDb = store.rawSqlite()
+  const memStore = new MemoryStore(store)
 
   const server = new Server(
     { name: "consilium", version: "0.1.0" },
@@ -167,7 +193,7 @@ export async function startMcpServer() {
   server.setRequestHandler({ method: "tools/call" } as any, async (req: any) => {
     const { name, arguments: args } = req.params
     try {
-      const result = await handleTool(name, args ?? {}, sessionMgr, registry, memStore)
+      const result = await handleTool(name, args ?? {}, sessionMgr, registry, memStore, rawDb)
       return { content: [{ type: "text", text: result }] }
     } catch (err) {
       return { content: [{ type: "text", text: `Error: ${err}` }], isError: true }
@@ -184,6 +210,7 @@ async function handleTool(
   sessionMgr: SessionManager,
   registry: ReturnType<typeof buildAutoRegistrySync>,
   memStore: MemoryStore,
+  rawDb: Database,
 ): Promise<string> {
   if (name === "start_session") {
     const mode = (args.mode as "council" | "dispatch" | "pipeline" | "debate") ?? "dispatch"
@@ -311,6 +338,24 @@ async function handleTool(
     }
     const results = memStore.searchKnowledge(opts)
     return JSON.stringify(results)
+  }
+
+  if (name === "memory_listKnowledge") {
+    const { listKnowledge } = await import("../core/memory/list.js")
+    const result = listKnowledge(rawDb, {
+      scope: args.scope as KnowledgeScope | undefined,
+      tags: args.tags as string[] | undefined,
+      query: args.query as string | undefined,
+      sort: args.sort as "title" | "created" | "updated" | "scope" | undefined,
+      limit: typeof args.limit === "number" ? args.limit : undefined,
+      offset: typeof args.offset === "number" ? args.offset : undefined,
+    })
+    return JSON.stringify(result)
+  }
+
+  if (name === "memory_getKnowledgeSummary") {
+    const { getKnowledgeSummary } = await import("../core/memory/summary.js")
+    return JSON.stringify(getKnowledgeSummary(rawDb))
   }
 
   throw new Error(`Unknown tool: ${name}`)

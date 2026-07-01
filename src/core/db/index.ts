@@ -104,6 +104,10 @@ export class DbStore {
       .run()
   }
 
+  rawSqlite(): Database {
+    return this.sqlite
+  }
+
   close() {
     try { this.sqlite.exec("PRAGMA wal_checkpoint(TRUNCATE);") } catch {}
     this.sqlite.close()

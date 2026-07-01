@@ -17,7 +17,9 @@ const { values, positionals } = parseArgs({
     content: { type: "string" },
     tags: { type: "string" },
     scope: { type: "string" },
+    sort: { type: "string" },
     limit: { type: "string" },
+    offset: { type: "string" },
     json: { type: "boolean", default: false },
     // agent subcommand options
     id: { type: "string" },
@@ -196,10 +198,57 @@ if (values.workflow) {
       console.log(`Stored: "${record.title}" (id: ${record.id})`)
     }
     dbStore.close()
+  } else if (sub === "list") {
+    const { listKnowledge } = await import("./core/memory/list.js")
+    const tags = values.tags ? values.tags.split(",").map(t => t.trim()).filter(Boolean) : undefined
+    const scope = values.scope as import("./core/memory/index.js").KnowledgeScope | undefined
+    const sort = values.sort as "title" | "created" | "updated" | "scope" | undefined
+    const limit = values.limit ? parseInt(values.limit, 10) : undefined
+    const offset = values.offset ? parseInt(values.offset, 10) : undefined
+    const result = listKnowledge(dbStore.rawSqlite(), { scope, tags, sort, limit, offset })
+    if (values.json) {
+      console.log(JSON.stringify(result, null, 2))
+    } else if (result.records.length === 0) {
+      console.log("No memory entries found.")
+    } else {
+      result.records.forEach((r, i) => {
+        console.log(`${i + 1}. [${r.scope}] ${r.title}`)
+        console.log(`   ${r.content.slice(0, 120)}${r.content.length > 120 ? "..." : ""}`)
+        if (r.tags.length > 0) console.log(`   tags: ${r.tags.join(", ")}`)
+        console.log()
+      })
+      if (result.hasMore) console.log(`  ... showing ${result.records.length} of ${result.total}`)
+    }
+    dbStore.close()
+  } else if (sub === "summary") {
+    const { getKnowledgeSummary } = await import("./core/memory/summary.js")
+    const summary = getKnowledgeSummary(dbStore.rawSqlite())
+    if (values.json) {
+      console.log(JSON.stringify(summary, null, 2))
+    } else {
+      console.log(`Total: ${summary.total}`)
+      if (Object.keys(summary.byScope).length > 0) {
+        console.log("By scope:")
+        for (const [scope, count] of Object.entries(summary.byScope)) {
+          console.log(`  ${scope}: ${count}`)
+        }
+      }
+      if (summary.topTags.length > 0) {
+        console.log("Top tags:")
+        for (const { tag, count } of summary.topTags) {
+          console.log(`  ${tag}: ${count}`)
+        }
+      }
+      const r = summary.recency
+      console.log(`Recency: today=${r.today}  week=${r.week}  month=${r.month}  older=${r.older}`)
+    }
+    dbStore.close()
   } else {
-    console.error("Usage: consilium memory <search|store> [args]")
+    console.error("Usage: consilium memory <search|store|list|summary> [args]")
     console.error("  search <query> [--tags t1,t2] [--scope s] [--limit n] [--json]")
     console.error("  store <title> --content <content> [--tags t1,t2] [--scope s]")
+    console.error("  list [--scope s] [--tags t1,t2] [--sort title|created|updated|scope] [--limit n] [--offset n] [--json]")
+    console.error("  summary [--json]")
     process.exit(1)
   }
 } else if (positionals[0] === "agent") {

@@ -32,6 +32,7 @@ const SLASH_SUGGESTIONS = [
   "/history",
   "/review",
   "/workflow",
+  "/memory",
   "/stop",
   "/help",
   "/debate",
@@ -655,6 +656,116 @@ export default function App({ initialMode = "council", initialRouter = "claude",
         break
       }
 
+      case "memory": {
+        const sub = args[0]
+        const { MemoryStore } = await import("../core/memory/index.js")
+        const rawDb = sessionMgr.current.getStore().rawSqlite()
+        const memStore = new MemoryStore(sessionMgr.current.getStore())
+
+        if (sub === "search") {
+          const query = args.slice(1).join(" ")
+          if (!query) {
+            setError("Usage: /memory search <query>")
+            break
+          }
+          setIsLoading(true)
+          setLoadingText("Searching memory...")
+          try {
+            const results = memStore.searchKnowledge({ query })
+            if (results.length === 0) {
+              addMessage("system", null, "No memory results found.")
+            } else {
+              const lines = results.map((r, i) =>
+                `  ${i + 1}. [${r.scope}] ${r.title}\n     ${r.content.slice(0, 120)}${r.content.length > 120 ? "..." : ""}${r.tags.length > 0 ? `\n     tags: ${r.tags.join(", ")}` : ""}`
+              )
+              addMessage("system", null, `Memory results:\n${lines.join("\n")}`)
+            }
+          } finally {
+            setIsLoading(false)
+            setLoadingText("")
+          }
+          break
+        }
+
+        if (sub === "store") {
+          const rest = args.slice(1).join(" ")
+          const sepIdx = rest.indexOf("|")
+          if (sepIdx === -1) {
+            setError("Usage: /memory store <title> | <content>")
+            break
+          }
+          const title = rest.slice(0, sepIdx).trim()
+          const content = rest.slice(sepIdx + 1).trim()
+          if (!title || !content) {
+            setError("Usage: /memory store <title> | <content>")
+            break
+          }
+          try {
+            const record = memStore.storeKnowledge({ title, content })
+            addMessage("system", null, `Stored: "${record.title}" (id: ${record.id.slice(0, 8)}...)`)
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e))
+          }
+          break
+        }
+
+        if (sub === "list") {
+          const { listKnowledge } = await import("../core/memory/list.js")
+          const listArgs = args.slice(1)
+          const listOpts: { scope?: string; tags?: string[]; sort?: string; limit?: number } = {}
+          for (let i = 0; i < listArgs.length; i++) {
+            if (listArgs[i] === "--scope" && listArgs[i + 1]) listOpts.scope = listArgs[++i]
+            else if (listArgs[i] === "--tags" && listArgs[i + 1]) listOpts.tags = listArgs[++i].split(",").map(t => t.trim()).filter(Boolean)
+            else if (listArgs[i] === "--sort" && listArgs[i + 1]) listOpts.sort = listArgs[++i]
+            else if (listArgs[i] === "--limit" && listArgs[i + 1]) listOpts.limit = parseInt(listArgs[++i], 10)
+          }
+          setIsLoading(true)
+          setLoadingText("Listing memory...")
+          try {
+            const { records, total, hasMore } = listKnowledge(rawDb, listOpts as Parameters<typeof listKnowledge>[1])
+            if (records.length === 0) {
+              addMessage("system", null, "No memory entries found.")
+            } else {
+              const lines = records.map((r, i) =>
+                `  ${i + 1}. [${r.scope}] ${r.title}${r.tags.length > 0 ? ` (${r.tags.join(", ")})` : ""}\n     ${r.content.slice(0, 100)}${r.content.length > 100 ? "..." : ""}`
+              )
+              const footer = hasMore ? `\n  ... and more (showing ${records.length} of ${total})` : `\n  Total: ${total}`
+              addMessage("system", null, `Memory entries:\n${lines.join("\n")}${footer}`)
+            }
+          } finally {
+            setIsLoading(false)
+            setLoadingText("")
+          }
+          break
+        }
+
+        if (sub === "summary") {
+          const { getKnowledgeSummary } = await import("../core/memory/summary.js")
+          setIsLoading(true)
+          setLoadingText("Getting memory summary...")
+          try {
+            const summary = getKnowledgeSummary(rawDb)
+            const scopeLines = Object.entries(summary.byScope).map(([s, c]) => `    ${s}: ${c}`)
+            const tagLines = summary.topTags.map(t => `    ${t.tag}: ${t.count}`)
+            const r = summary.recency
+            const lines = [
+              `Total: ${summary.total}`,
+              `By scope:${scopeLines.length > 0 ? "\n" + scopeLines.join("\n") : " (none)"}`,
+              `Top tags:${tagLines.length > 0 ? "\n" + tagLines.join("\n") : " (none)"}`,
+              `Recency: today=${r.today}  week=${r.week}  month=${r.month}  older=${r.older}`,
+            ]
+            addMessage("system", null, lines.join("\n"))
+          } finally {
+            setIsLoading(false)
+            setLoadingText("")
+          }
+          break
+        }
+
+        setError("Usage: /memory <search <query> | store <title> | <content> | list [...opts] | summary>")
+        break
+      }
+
       case "help": {
         const helpText = [
           "Commands:",
@@ -671,6 +782,10 @@ export default function App({ initialMode = "council", initialRouter = "claude",
           "  /workflow list                            — list available workflows",
           "  /workflow show <name>                     — show workflow steps",
           "  /workflow run <name> <input>              — run a workflow",
+          "  /memory search <query>                    — search local memory",
+          "  /memory store <title> | <content>         — store entry in local memory",
+          "  /memory list [--scope X] [--tags a,b] [--sort title|created|updated|scope] [--limit N]",
+          "  /memory summary                           — show memory stats",
           "  /stop                                     — stop debate after current round",
           "  /debate rounds <n>                        — set max debate rounds",
           "  /help                                     — show this help",

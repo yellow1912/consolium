@@ -46,7 +46,7 @@ describe("council mode", () => {
       router: trackingAdapter("claude"),
       adapters: [trackingAdapter("codex"), trackingAdapter("gemini")],
     })
-    await runner.council("question", [])
+    await runner.council("question", [], { adversarial: false })
     // router (claude) is called for synthesis but not as a respondent
     const respondentCalls = called.filter(n => n !== "claude")
     expect(respondentCalls).toHaveLength(2)
@@ -516,6 +516,133 @@ describe("CouncilRunner.buildDeltaMessage", () => {
 
   it("returns plain prompt when no prior agent responses exist", () => {
     expect((runner as any).buildDeltaMessage("hi", [], "claude")).toBe("hi")
+  })
+})
+
+describe("council adversarial critique round", () => {
+  it("runs critique round when adversarial=true and multiple agents respond", async () => {
+    const runner = new CouncilRunner({
+      router: mock("claude", "synthesis"),
+      adapters: [mock("codex", "codex answer"), mock("gemini", "gemini answer")],
+    })
+    const result = await runner.council("question?", [], { adversarial: true })
+    expect(result.critiques).toHaveLength(2)
+    expect(result.critiques!.map(c => c.critic)).toContain("codex")
+    expect(result.critiques!.map(c => c.critic)).toContain("gemini")
+  })
+
+  it("skips critique round when adversarial=false", async () => {
+    const runner = new CouncilRunner({
+      router: mock("claude", "synthesis"),
+      adapters: [mock("codex", "codex answer"), mock("gemini", "gemini answer")],
+    })
+    const result = await runner.council("question?", [], { adversarial: false })
+    expect(result.critiques).toBeUndefined()
+  })
+
+  it("skips critique round when only one agent responds", async () => {
+    const runner = new CouncilRunner({
+      router: mock("claude", "synthesis"),
+      adapters: [mock("codex", "codex answer")],
+    })
+    const result = await runner.council("question?", [], { adversarial: true })
+    expect(result.critiques).toBeUndefined()
+  })
+
+  it("onCritiqueComplete fires for each successful critique", async () => {
+    const completed: string[] = []
+    const runner = new CouncilRunner({
+      router: mock("claude", "synthesis"),
+      adapters: [mock("codex", "codex answer"), mock("gemini", "gemini answer")],
+    })
+    await runner.council("question?", [], {
+      adversarial: true,
+      onCritiqueComplete: e => completed.push(e.critic),
+    })
+    expect(completed).toContain("codex")
+    expect(completed).toContain("gemini")
+    expect(completed).toHaveLength(2)
+  })
+
+  it("partial critique failure - remaining critiques still collected", async () => {
+    const failOnCritique: AgentAdapter = {
+      name: "codex",
+      isAvailable: async () => true,
+      getModels: async () => [],
+      query: async (prompt: string) => {
+        if (prompt.includes("Critique these responses")) throw new Error("critique failed")
+        return { agent: "codex", content: "codex answer", durationMs: 1 }
+      },
+    }
+    const runner = new CouncilRunner({
+      router: mock("claude", "synthesis"),
+      adapters: [failOnCritique, mock("gemini", "gemini answer")],
+    })
+    const result = await runner.council("question?", [], { adversarial: true })
+    expect(result.critiques).toHaveLength(1)
+    expect(result.critiques![0].critic).toBe("gemini")
+    expect(result.synthesis).toBe("synthesis")
+  })
+
+  it("synthesis prompt includes critique block when critiques present", async () => {
+    let capturedPrompt = ""
+    const capturingRouter: AgentAdapter = {
+      name: "claude",
+      isAvailable: async () => true,
+      getModels: async () => [],
+      query: async (prompt: string) => {
+        capturedPrompt = prompt
+        return { agent: "claude", content: "synthesis", durationMs: 1 }
+      },
+    }
+    const runner = new CouncilRunner({
+      router: capturingRouter,
+      adapters: [mock("codex", "codex answer"), mock("gemini", "gemini answer")],
+    })
+    await runner.council("question?", [], { adversarial: true })
+    expect(capturedPrompt).toContain("Peer critiques")
+    expect(capturedPrompt).toContain("incorporating valid critique points")
+  })
+
+  it("synthesis prompt has no critique section when adversarial=false", async () => {
+    let capturedPrompt = ""
+    const capturingRouter: AgentAdapter = {
+      name: "claude",
+      isAvailable: async () => true,
+      getModels: async () => [],
+      query: async (prompt: string) => {
+        capturedPrompt = prompt
+        return { agent: "claude", content: "synthesis", durationMs: 1 }
+      },
+    }
+    const runner = new CouncilRunner({
+      router: capturingRouter,
+      adapters: [mock("codex", "codex answer"), mock("gemini", "gemini answer")],
+    })
+    await runner.council("question?", [], { adversarial: false })
+    expect(capturedPrompt).not.toContain("Peer critiques")
+  })
+
+  it("critique prompt excludes the critiquing agent's own response", async () => {
+    const capturedCritiquePrompts: Record<string, string> = {}
+    const trackingAdapter = (name: string): AgentAdapter => ({
+      name,
+      isAvailable: async () => true,
+      getModels: async () => [],
+      query: async (prompt: string) => {
+        if (prompt.includes("Critique these responses")) capturedCritiquePrompts[name] = prompt
+        return { agent: name, content: `${name} answer`, durationMs: 1 }
+      },
+    })
+    const runner = new CouncilRunner({
+      router: mock("claude", "synthesis"),
+      adapters: [trackingAdapter("codex"), trackingAdapter("gemini")],
+    })
+    await runner.council("question?", [], { adversarial: true })
+    expect(capturedCritiquePrompts["codex"]).not.toContain("codex answer")
+    expect(capturedCritiquePrompts["codex"]).toContain("gemini answer")
+    expect(capturedCritiquePrompts["gemini"]).not.toContain("gemini answer")
+    expect(capturedCritiquePrompts["gemini"]).toContain("codex answer")
   })
 })
 

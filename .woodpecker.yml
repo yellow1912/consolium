@@ -1,0 +1,30 @@
+# Woodpecker CI — yellow1912/consolium
+#
+# NOTE: local directory is "consilium" but the GitHub repo (and this
+# pipeline's home) is yellow1912/consolium — different spelling, different
+# owner from the Nilead org. Not a Nilead repo, so no KIT_TOKEN needed even
+# if it were required: package.json/bun.lock pull only public npm packages
+# (@anthropic-ai/sdk, @openai/codex-sdk, ink, drizzle-orm, etc.), nothing
+# from a private git dependency.
+#
+# No service containers: drizzle-kit/drizzle-orm are present but there is no
+# drizzle.config.* and no Postgres/Redis dependency — persistence here is
+# local, not a networked service the tests would need to reach by name.
+#
+# No secrets: tests were verified locally with ANTHROPIC_API_KEY unset and
+# no .env file present; 331 pass / 0 fail, no network calls in the test
+# files. council/adapter tests mock the provider clients rather than hitting
+# them for real.
+#
+# No lint step: no eslint/biome config or dependency in this repo, so there
+# is nothing real to gate on. `bun run test` is the genuine check that exists.
+
+labels:
+  backend: docker
+
+steps:
+  - name: test
+    image: oven/bun:1
+    commands:
+      - bun install --frozen-lockfile
+      - bun run test

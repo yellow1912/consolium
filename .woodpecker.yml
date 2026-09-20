@@ -18,6 +18,13 @@
 #
 # No lint step: no eslint/biome config or dependency in this repo, so there
 # is nothing real to gate on. `bun run test` is the genuine check that exists.
+#
+# agent-launcher.test.ts genuinely launches (or attempts to launch) a real
+# tmux session/window and checks the result, rather than mocking it — the
+# oven/bun image has no tmux binary, so that suite would otherwise fail for
+# real (not something to paper over: two of its tests exercise real tmux
+# behavior). Installing tmux is a small apt package and lets the tests run
+# for real instead of skipping them.
 
 labels:
   backend: docker
@@ -26,5 +33,6 @@ steps:
   - name: test
     image: oven/bun:1
     commands:
+      - apt-get update -qq && apt-get install -y -qq tmux
       - bun install --frozen-lockfile
       - bun run test

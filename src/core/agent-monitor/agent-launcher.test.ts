@@ -48,14 +48,39 @@ describe("launchAgentInTmux", () => {
 
   it("sets location containing 'window' when TMUX env var is set and tmux available", async () => {
     const hasTmux = Boolean(Bun.which("tmux"))
-    process.env.TMUX = "fake-tmux-session,0,0"
-    const result = await launchAgentInTmux("nonexistent-agent-xyz", { name: "test-win" })
-    if (hasTmux && result.location.startsWith("tmux")) {
-      expect(result.location).toContain("window")
-      expect(result.location).toContain("test-win")
-    } else {
+    if (!hasTmux) {
+      process.env.TMUX = "fake-tmux-session,0,0"
+      const result = await launchAgentInTmux("nonexistent-agent-xyz", { name: "test-win" })
       // fell back to Terminal.app or background — location is non-empty
       expect(result.location.length).toBeGreaterThan(0)
+      return
+    }
+
+    // A literal placeholder like "fake-tmux-session,0,0" can never resolve to
+    // a real server, so `tmux new-window` always fails to connect no matter
+    // the environment — that was masking this branch behind the "else"
+    // fallback above on every machine that had a GUI terminal (Terminal.app
+    // on macOS) to fall back to, and failing outright in headless CI, which
+    // has neither a GUI nor a resolvable fake session. Stand up a real
+    // detached session instead and read back its actual socket path + server
+    // pid, which is the same shape tmux itself would set for a real client.
+    const outerName = `outer-${Date.now()}`
+    const created = Bun.spawnSync(["tmux", "new-session", "-d", "-s", outerName, "-c", "/tmp"])
+    expect(created.exitCode).toBe(0)
+    try {
+      const socketPath = new TextDecoder()
+        .decode(Bun.spawnSync(["tmux", "display-message", "-p", "-t", outerName, "#{socket_path}"]).stdout)
+        .trim()
+      const serverPid = new TextDecoder()
+        .decode(Bun.spawnSync(["tmux", "display-message", "-p", "-t", outerName, "#{pid}"]).stdout)
+        .trim()
+      process.env.TMUX = `${socketPath},${serverPid},0`
+
+      const result = await launchAgentInTmux("nonexistent-agent-xyz", { name: "test-win" })
+      expect(result.location).toContain("window")
+      expect(result.location).toContain("test-win")
+    } finally {
+      Bun.spawnSync(["tmux", "kill-session", "-t", outerName])
     }
   }, 15_000)
 

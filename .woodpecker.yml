@@ -26,6 +26,18 @@
 # behavior). Installing tmux is a small apt package and lets the tests run
 # for real instead of skipping them.
 
+# Which events run this pipeline: pull requests, pushes to the default
+# branch, and manual runs from the UI. Deliberately not
+# pull_request_metadata (a description/label edit or "ready for review"),
+# pull_request_closed (the merge's own push to the default branch runs
+# anyway), or pushes to feature branches (the PR's run covers them): each
+# of those re-ran the full suite on an already-tested commit, on a CI host
+# shared with production (2026-09-29: 64 pipelines queued).
+when:
+  - event: [pull_request, manual]
+  - event: push
+    branch: ${CI_REPO_DEFAULT_BRANCH}
+
 labels:
   backend: docker
 

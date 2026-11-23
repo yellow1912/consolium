@@ -11,6 +11,7 @@ type ClaudeAdapterOptions = {
 export class ClaudeAdapter extends SubprocessAdapter {
   readonly name: string
   readonly bin = "claude"
+  override readonly supportsReadOnly = true
   private model: string | null
   private role: string
   private _sessionId = ""
@@ -35,6 +36,7 @@ export class ClaudeAdapter extends SubprocessAdapter {
 
   buildArgs(prompt: string, options?: QueryOptions): string[] {
     const args = ["--print"]
+    if (options?.access === "read-only") args.push("--permission-mode", "plan")
     const model = options?.model ?? this.model
     if (model) args.push("--model", model)
     if (this._isResume) {
@@ -67,6 +69,7 @@ export class ClaudeAdapter extends SubprocessAdapter {
   }
 
   override async *queryStream(prompt: string, context: Message[], options?: QueryOptions): AsyncGenerator<string, void, unknown> {
+    this.assertAccess(options)
     this._isResume = !!options?.agentSessionId
     this._sessionId = options?.agentSessionId ?? randomUUID()
     const effectivePrompt = this._isResume || context.length === 0
@@ -102,6 +105,7 @@ export class ClaudeAdapter extends SubprocessAdapter {
   }
 
   override async query(prompt: string, context: Message[], options?: QueryOptions): Promise<AgentResponse> {
+    this.assertAccess(options)
     this._isResume = !!options?.agentSessionId
     this._sessionId = options?.agentSessionId ?? randomUUID()
     const sessionId = this._sessionId

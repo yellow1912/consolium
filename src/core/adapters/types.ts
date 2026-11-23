@@ -30,8 +30,12 @@ export type ModelInfo = {
   isDefault?: boolean
 }
 
+export type Access = "read-only" | "full"
+
 export type QueryOptions = {
   model?: string
+  /** Undefined means "full": the interactive TUI is run by a person who chose that. */
+  access?: Access
   agentSessionId?: string
   systemPrompt?: string
   signal?: AbortSignal
@@ -39,10 +43,19 @@ export type QueryOptions = {
 
 export interface AgentAdapter {
   readonly name: string
+  /** True when the agent has a verified read-only invocation. Missing means unsupported. */
+  readonly supportsReadOnly?: boolean
   query(prompt: string, context: Message[], options?: QueryOptions): Promise<AgentResponse>
   queryStream?(prompt: string, context: Message[], options?: QueryOptions): AsyncGenerator<string, void, unknown>
   stream?(prompt: string, context: Message[], options?: QueryOptions): AsyncIterable<string>
   isAvailable(): Promise<boolean>
   getModels(): Promise<ModelInfo[]>
   readonly lastSessionId?: string
+}
+
+export class ReadOnlyUnsupportedError extends Error {
+  constructor(agent: string) {
+    super(`agent ${agent} has no read-only mode; it is not started over MCP unless listed in CONSILIUM_MCP_WRITE_AGENTS`)
+    this.name = "ReadOnlyUnsupportedError"
+  }
 }

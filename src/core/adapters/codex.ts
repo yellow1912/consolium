@@ -4,12 +4,15 @@ import type { ModelInfo, QueryOptions } from "./types"
 export class CodexAdapter extends SubprocessAdapter {
   readonly name = "codex"
   readonly bin = "codex"
+  override readonly supportsReadOnly = true
   private model: string | null
 
   constructor(model: string | null = null) { super(); this.model = model }
 
   buildArgs(prompt: string, options?: QueryOptions): string[] {
-    const args = ["exec", "--config", "approval_policy=never"]
+    const args = options?.access === "read-only"
+      ? ["exec", "--sandbox", "read-only"]
+      : ["exec", "--config", "approval_policy=never"]
     const model = options?.model ?? this.model
     if (model) args.push("--config", `model=${model}`)
     args.push(prompt)

@@ -1,4 +1,4 @@
-import type { ModelInfo } from "./types"
+import type { Access, ModelInfo } from "./types"
 
 export type StreamFormat =
   | "plain"
@@ -13,7 +13,9 @@ export type AgentDef = {
   bin: string
   streamFormat: StreamFormat
   promptVia: "argv" | "stdin" | "jsonrpc"
-  buildArgs(prompt: string, opts?: { model?: string }): string[]
+  buildArgs(prompt: string, opts?: { model?: string; access?: Access }): string[]
+  /** true only when buildArgs produces a verified read-only invocation for access "read-only". Missing means unsupported. */
+  readOnlySupported?: boolean
   env?: Record<string, string>
   deleteEnv?: string[]
   modelProbe?: string[]
@@ -24,11 +26,14 @@ export type AgentDef = {
 export const AGENT_DEFS: AgentDef[] = [
   {
     name: "codex",
+    readOnlySupported: true,
     bin: "codex",
     streamFormat: "plain",
     promptVia: "argv",
     buildArgs(prompt, opts) {
-      const args = ["exec", "--config", "approval_policy=never"]
+      const args = opts?.access === "read-only"
+        ? ["exec", "--sandbox", "read-only"]
+        : ["exec", "--config", "approval_policy=never"]
       if (opts?.model) args.push("--config", `model=${opts.model}`)
       args.push(prompt)
       return args
@@ -40,11 +45,14 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "gemini",
+    readOnlySupported: true,
     bin: "gemini",
     streamFormat: "plain",
     promptVia: "argv",
     buildArgs(prompt, opts) {
-      const args = ["-p", prompt, "--yolo"]
+      const args = opts?.access === "read-only"
+        ? ["-p", prompt, "--approval-mode", "plan"]
+        : ["-p", prompt, "--yolo"]
       if (opts?.model) args.push("-m", opts.model)
       return args
     },
@@ -57,6 +65,7 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "agy",
+    readOnlySupported: false,
     bin: "agy",
     streamFormat: "plain",
     promptVia: "argv",
@@ -69,6 +78,7 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "copilot",
+    readOnlySupported: false,
     bin: "copilot",
     streamFormat: "copilot-stream-json",
     promptVia: "argv",
@@ -83,11 +93,14 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "cursor-agent",
+    readOnlySupported: true,
     bin: "cursor-agent",
     streamFormat: "plain",
     promptVia: "argv",
     buildArgs(prompt, opts) {
-      const args = ["--print", "--force", "--trust"]
+      const args = opts?.access === "read-only"
+        ? ["--print", "--trust", "--mode", "plan"]
+        : ["--print", "--force", "--trust"]
       if (opts?.model) args.push("--model", opts.model)
       args.push(prompt)
       return args
@@ -98,6 +111,7 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "qwen",
+    readOnlySupported: false,
     bin: "qwen",
     streamFormat: "plain",
     promptVia: "stdin",
@@ -113,6 +127,7 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "opencode",
+    readOnlySupported: false,
     bin: "opencode",
     streamFormat: "json-event-stream",
     promptVia: "stdin",
@@ -128,6 +143,7 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "aider",
+    readOnlySupported: false,
     bin: "aider",
     streamFormat: "plain",
     promptVia: "argv",
@@ -142,6 +158,7 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "devin",
+    readOnlySupported: false,
     bin: "devin",
     streamFormat: "acp-json-rpc",
     promptVia: "jsonrpc",
@@ -155,6 +172,7 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "hermes",
+    readOnlySupported: false,
     bin: "hermes",
     streamFormat: "acp-json-rpc",
     promptVia: "jsonrpc",
@@ -168,6 +186,7 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "kimi",
+    readOnlySupported: false,
     bin: "kimi",
     streamFormat: "acp-json-rpc",
     promptVia: "jsonrpc",
@@ -181,6 +200,7 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "kiro",
+    readOnlySupported: false,
     bin: "kiro-cli",
     streamFormat: "acp-json-rpc",
     promptVia: "jsonrpc",
@@ -194,6 +214,7 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "vibe",
+    readOnlySupported: false,
     bin: "vibe-acp",
     streamFormat: "acp-json-rpc",
     promptVia: "jsonrpc",
@@ -207,6 +228,7 @@ export const AGENT_DEFS: AgentDef[] = [
   },
   {
     name: "pi",
+    readOnlySupported: false,
     bin: "pi",
     streamFormat: "pi-rpc",
     promptVia: "jsonrpc",

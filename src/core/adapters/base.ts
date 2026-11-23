@@ -1,10 +1,15 @@
-import type { AgentAdapter, AgentResponse, Message, ModelInfo, QueryOptions } from "./types"
+import { ReadOnlyUnsupportedError, type AgentAdapter, AgentResponse, Message, ModelInfo, QueryOptions } from "./types"
 import { buildBoundedContextPrompt } from "./context"
 
 export abstract class SubprocessAdapter implements AgentAdapter {
   abstract readonly name: string
   abstract readonly bin: string
+  readonly supportsReadOnly: boolean = false
   abstract buildArgs(prompt: string, options?: QueryOptions): string[]
+
+  protected assertAccess(options?: QueryOptions): void {
+    if (options?.access === "read-only" && !this.supportsReadOnly) throw new ReadOnlyUnsupportedError(this.name)
+  }
 
   async isAvailable(): Promise<boolean> {
     const proc = Bun.spawnSync(["which", this.bin])
@@ -29,6 +34,7 @@ export abstract class SubprocessAdapter implements AgentAdapter {
   }
 
   async query(prompt: string, context: Message[], options?: QueryOptions): Promise<AgentResponse> {
+    this.assertAccess(options)
     const fullPrompt = this.buildContextPrompt(prompt, context)
     const start = Date.now()
     let { exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(fullPrompt, options), options?.signal)
@@ -39,7 +45,7 @@ export abstract class SubprocessAdapter implements AgentAdapter {
     if (exitCode !== 0 && options?.model && stderr.toLowerCase().includes("model")) {
       // model not found — retry without model override
       console.warn(`[${this.name}] model '${options.model}' rejected, retrying with default`)
-      ;({ exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(fullPrompt))) // Retry without model option — let the CLI use its own default
+      ;({ exitCode, stdout, stderr } = await this.spawnAndRead(this.buildArgs(fullPrompt, { access: options?.access }))) // Retry without model option — let the CLI use its own default
     }
 
     if (exitCode !== 0) {
@@ -53,6 +59,7 @@ export abstract class SubprocessAdapter implements AgentAdapter {
   }
 
   async *queryStream(prompt: string, context: Message[], options?: QueryOptions): AsyncGenerator<string, void, unknown> {
+    this.assertAccess(options)
     const fullPrompt = this.buildContextPrompt(prompt, context)
     const args = this.buildArgs(fullPrompt, options)
     const proc = Bun.spawn([this.bin, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" })

@@ -4,6 +4,8 @@ import type { ModelInfo, QueryOptions } from "./types"
 export class AgyAdapter extends SubprocessAdapter {
   readonly name = "agy"
   readonly bin = "agy"
+  // `agy --mode plan` exists but its help does not say it is read-only, so no read-only mode is claimed.
+  override readonly supportsReadOnly = false
 
   buildArgs(prompt: string, _options?: QueryOptions): string[] {
     return ["--dangerously-skip-permissions", "-p", prompt]

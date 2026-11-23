@@ -294,6 +294,20 @@ consilium --mcp-config
 
 MCP tools: `start_session`, `send_message`, `get_result`, `list_sessions`, `close_session`, `memory_listKnowledge`, `memory_getKnowledgeSummary`.
 
+### MCP access
+
+Agents started over MCP are read-only by default. Each one runs in its own read-only or plan mode, with its approval bypass switched off. An agent with no verified read-only mode is not started: every mode leaves it out and names it in the result, and the call fails only when no usable agent remains or when the router itself is such an agent.
+
+Set `CONSILIUM_MCP_WRITE_AGENTS` in the MCP server's environment to give agents full access. Use a comma-separated list of agent names, or `*` for all. Tool arguments cannot change access.
+
+Workflows with `trust: checkpoint` pause for a person, so `run_workflow` refuses them over MCP. Set `CONSILIUM_MCP_ALLOW_CHECKPOINT_WORKFLOWS=1` in the server's environment to allow them. They then run without pausing.
+
+Each `send_message` result ends with the list of `agent=access` for the agents it started. `run_workflow` returns the same list as an `access` field in its JSON result, and lists agents it left out in `skipped`.
+
+Names in `CONSILIUM_MCP_WRITE_AGENTS` are agent names as shown by `list_agents` (for example `cursor-agent`, not a binary name). Matching is exact and case-sensitive. At start-up the server writes a line to stderr for any listed name that is not a registered agent.
+
+Read-only is each agent's own plan or read-only mode. It covers that agent's file and shell tools, depends on that agent's own configuration in the server's working directory (for example a workspace's `.gemini` settings), and does not cover MCP servers configured inside that agent.
+
 ## Agents
 
 All agents run via their CLI — no API keys required by Consilium. Each agent must be installed and authenticated independently.

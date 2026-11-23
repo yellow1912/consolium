@@ -4,12 +4,15 @@ import type { ModelInfo, QueryOptions } from "./types"
 export class GeminiAdapter extends SubprocessAdapter {
   readonly name = "gemini"
   readonly bin = "gemini"
+  override readonly supportsReadOnly = true
   private model: string | null
 
   constructor(model: string | null = null) { super(); this.model = model }
 
   buildArgs(prompt: string, options?: QueryOptions): string[] {
-    const args = ["-p", prompt, "--yolo"]
+    const args = options?.access === "read-only"
+      ? ["-p", prompt, "--approval-mode", "plan"]
+      : ["-p", prompt, "--yolo"]
     const model = options?.model ?? this.model
     if (model) args.push("-m", model)
     return args

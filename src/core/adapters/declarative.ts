@@ -1,15 +1,21 @@
 import type { AgentDef } from "./defs"
-import type { AgentAdapter, AgentResponse, Message, ModelInfo, QueryOptions } from "./types"
+import { ReadOnlyUnsupportedError, type AgentAdapter, AgentResponse, Message, ModelInfo, QueryOptions } from "./types"
 import { createParser } from "./stream"
 import { buildBoundedContextPrompt } from "./context"
 
 export class DeclarativeAdapter implements AgentAdapter {
   readonly name: string
+  readonly supportsReadOnly: boolean
   private def: AgentDef
 
   constructor(def: AgentDef) {
     this.def = def
     this.name = def.name
+    this.supportsReadOnly = def.readOnlySupported === true
+  }
+
+  private assertAccess(options?: QueryOptions): void {
+    if (options?.access === "read-only" && !this.supportsReadOnly) throw new ReadOnlyUnsupportedError(this.name)
   }
 
   async isAvailable(): Promise<boolean> {
@@ -90,10 +96,11 @@ export class DeclarativeAdapter implements AgentAdapter {
   }
 
   async query(prompt: string, context: Message[], options?: QueryOptions): Promise<AgentResponse> {
+    this.assertAccess(options)
     const fullPrompt = this.buildContextPrompt(prompt, context)
     const start = Date.now()
 
-    let args = this.def.buildArgs(fullPrompt, { model: options?.model })
+    let args = this.def.buildArgs(fullPrompt, { model: options?.model, access: options?.access })
     let proc = this.spawn(fullPrompt, args)
 
     const onAbort = () => proc.kill()
@@ -108,7 +115,7 @@ export class DeclarativeAdapter implements AgentAdapter {
 
       if (exitCode !== 0 && options?.model && stderr.toLowerCase().includes("model")) {
         console.warn(`[${this.name}] model '${options.model}' rejected, retrying with default`)
-        args = this.def.buildArgs(fullPrompt, {})
+        args = this.def.buildArgs(fullPrompt, { access: options?.access })
         proc = this.spawn(fullPrompt, args)
         ;[exitCode, stdout, stderr] = await Promise.all([
           proc.exited,
@@ -127,8 +134,9 @@ export class DeclarativeAdapter implements AgentAdapter {
   }
 
   async *queryStream(prompt: string, context: Message[], options?: QueryOptions): AsyncGenerator<string, void, unknown> {
+    this.assertAccess(options)
     const fullPrompt = this.buildContextPrompt(prompt, context)
-    const args = this.def.buildArgs(fullPrompt, { model: options?.model })
+    const args = this.def.buildArgs(fullPrompt, { model: options?.model, access: options?.access })
     const proc = this.spawn(fullPrompt, args)
 
     const onAbort = () => proc.kill()

@@ -3,9 +3,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { Database } from "bun:sqlite"
 import { SessionManager } from "../core/session/index"
 import { CouncilRunner } from "../core/council/index"
-import { buildAutoRegistrySync } from "../core/adapters/registry"
+import { buildAutoRegistrySync, type AdapterRegistry } from "../core/adapters/registry"
+import { mcpAccessFor, wrapRegistryForMcp, accessSummary, readOnlySkipNote, splitUsable, registryOf, unknownWriteAgents } from "./access"
 import { loadAllWorkflows, loadWorkflow } from "../workflows/loader"
 import { WorkflowRunner } from "../workflows/runner"
+import { ReadOnlyUnsupportedError } from "../core/adapters/types"
 import { MemoryStore, type KnowledgeScope, type SearchOptions } from "../core/memory/index"
 
 type McpTool = {
@@ -177,6 +179,10 @@ export function buildMcpTools(): McpTool[] {
 export async function startMcpServer() {
   const sessionMgr = new SessionManager()
   const registry = buildAutoRegistrySync()
+  const unknown = unknownWriteAgents(registry.names())
+  if (unknown.length > 0) {
+    console.error(`[consilium mcp] CONSILIUM_MCP_WRITE_AGENTS names no registered agent: ${unknown.join(", ")} (registered: ${registry.names().join(", ")})`)
+  }
   const store = sessionMgr.getStore()
   const rawDb = store.rawSqlite()
   const memStore = new MemoryStore(store)
@@ -204,13 +210,14 @@ export async function startMcpServer() {
   console.error("Consilium MCP server running on stdio")
 }
 
-async function handleTool(
+export async function handleTool(
   name: string,
   args: Record<string, unknown>,
   sessionMgr: SessionManager,
-  registry: ReturnType<typeof buildAutoRegistrySync>,
+  registry: AdapterRegistry,
   memStore: MemoryStore,
   rawDb: Database,
+  env: Record<string, string | undefined> = process.env,
 ): Promise<string> {
   if (name === "start_session") {
     const mode = (args.mode as "council" | "dispatch" | "pipeline" | "debate") ?? "dispatch"
@@ -228,10 +235,23 @@ async function handleTool(
     const context = sessionMgr.getMessages(sessionId)
     sessionMgr.addMessage(sessionId, "user", null, message)
 
-    const router = registry.get(session.router)
+    const used = new Map<string, string>()
+    const guarded = wrapRegistryForMcp(registry, env, (agent, access) => used.set(agent, access))
+    const router = guarded.get(session.router)
     if (!router) throw new Error(`Router '${session.router}' not found`)
+    if (mcpAccessFor(router.name, env) === "read-only" && router.supportsReadOnly !== true) {
+      throw new ReadOnlyUnsupportedError(router.name)
+    }
 
-    const runner = new CouncilRunner({ router, adapters: registry.except(session.router) })
+    const { usable, skipped } = splitUsable(guarded.except(session.router), env)
+    if (session.mode === "pipeline" && usable.length === 0 && skipped.length > 0) {
+      throw new Error(
+        `Pipeline has no agent left to run or review: ${skipped.join(", ")} ha${skipped.length === 1 ? "s" : "ve"} no read-only mode and ` +
+        `${skipped.length === 1 ? "is" : "are"} not listed in CONSILIUM_MCP_WRITE_AGENTS.`,
+      )
+    }
+
+    const runner = new CouncilRunner({ router, adapters: usable })
     let resultText: string
 
     if (session.mode === "council") {
@@ -245,9 +265,12 @@ async function handleTool(
       resultText = r.synthesis
     } else {
       const r = await runner.pipeline(message, context)
+      if (r.reviews.length === 0) throw new Error("Pipeline finished with no reviews, so its result is not approved.")
       resultText = r.taskContent
     }
 
+    resultText += readOnlySkipNote(skipped) + accessSummary(used)
+    console.error(`[consilium mcp] send_message ${sessionId} ${accessSummary(used).trim()}`)
     sessionMgr.addMessage(sessionId, "agent", "consilium", resultText)
     return resultText
   }
@@ -297,7 +320,27 @@ async function handleTool(
     const workflow = await loadWorkflow(workflowName)
     if (!workflow) throw new Error(`Workflow '${workflowName}' not found`)
 
-    const runner = new WorkflowRunner(registry, routerName)
+    if (workflow.trust === "checkpoint" && env.CONSILIUM_MCP_ALLOW_CHECKPOINT_WORKFLOWS !== "1") {
+      throw new Error(
+        `Workflow '${workflowName}' has trust: checkpoint. It pauses for a person to approve between steps, so it must be run in the Consilium TUI. ` +
+        `To allow it over MCP anyway, start the MCP server with CONSILIUM_MCP_ALLOW_CHECKPOINT_WORKFLOWS=1.`,
+      )
+    }
+
+    const used = new Map<string, string>()
+    const guarded = wrapRegistryForMcp(registry, env, (agent, access) => used.set(agent, access))
+    if (workflow.steps.some(s => !s.agent)) {
+      const router = guarded.get(routerName)
+      if (!router) throw new Error(`Router '${routerName}' not found`)
+      if (mcpAccessFor(router.name, env) === "read-only" && router.supportsReadOnly !== true) {
+        throw new ReadOnlyUnsupportedError(router.name)
+      }
+    }
+    const { usable, skipped } = splitUsable(guarded.all(), env)
+    for (const step of workflow.steps) {
+      if (step.agent && skipped.includes(step.agent)) throw new ReadOnlyUnsupportedError(step.agent)
+    }
+    const runner = new WorkflowRunner(registryOf(usable), routerName)
     const steps: Array<{ step: number; agent: string; output: string }> = []
 
     const context = await runner.run(workflow, input, {
@@ -306,7 +349,9 @@ async function handleTool(
       },
     })
 
-    return JSON.stringify({ workflow: workflowName, input, steps, finalContext: context })
+    const access = accessSummary(used).trim()
+    console.error(`[consilium mcp] run_workflow ${workflowName} ${access}`)
+    return JSON.stringify({ workflow: workflowName, input, steps, finalContext: context, access, skipped })
   }
 
   if (name === "memory_storeKnowledge") {
